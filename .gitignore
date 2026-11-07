@@ -1,0 +1,17 @@
+# Rust build artifact
+target
+
+# Local git worktrees (`just worktree-new`)
+.worktrees
+
+# What this repository tells an agent is AGENTS.md. What a session leaves —
+# a personal CLAUDE.md or CLAUDE.local.md, local settings — is somebody's local
+# state. `CLAUDE*.md` and `.claude/` match at every depth.
+CLAUDE*.md
+.claude/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,32 @@
+[package]
+name = "retarget"
+description = "Tune a coding agent's harness one setting at a time, and keep only what measurably helps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+
+# One package is the library users depend on and the command they install
+# (`cargo install retarget`). What only the command needs (the argument
+# parser, output formatting) is an optional dependency behind `cli`, so a
+# library user who writes `default-features = false` does not build it. Cargo
+# has no per-target dependencies (rust-lang/cargo#1982), so the feature is the
+# boundary.
+[features]
+default = ["cli"]
+cli = []
+
+[[bin]]
+name = "retarget"
+path = "src/main.rs"
+required-features = ["cli"]
+# The binary has the library's name; the command's doc is the "Command line"
+# section of the library's crate doc, the front page of `cargo doc`.
+doc = false
+
+[dependencies]
+retarget-core.workspace = true

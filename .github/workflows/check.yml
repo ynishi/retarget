@@ -1,0 +1,54 @@
+
+# Runs `just check`, the definition of green. The gates live in the Justfile;
+# this file only provides a machine to run them on.
+
+name: check
+
+on:
+  pull_request:
+    paths-ignore:
+      - '.claude/**'
+      - 'AGENTS.md'
+      - 'CHANGELOG.md'
+      - 'CONTRIBUTING.md'
+      - 'LICENSE-APACHE'
+      - 'LICENSE-MIT'
+      - 'PUBLIC_DEVELOPMENT.md'
+      - 'README.md'
+      - 'SECURITY.md'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '.claude/**'
+      - 'AGENTS.md'
+      - 'CHANGELOG.md'
+      - 'CONTRIBUTING.md'
+      - 'LICENSE-APACHE'
+      - 'LICENSE-MIT'
+      - 'PUBLIC_DEVELOPMENT.md'
+      - 'README.md'
+      - 'SECURITY.md'
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml pins the version and components.
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: just check
+

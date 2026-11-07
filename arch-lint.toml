@@ -1,0 +1,67 @@
+#:schema https://raw.githubusercontent.com/ynishi/arch-lint/v0.11.0/schema/arch-lint.schema.json
+#
+# Architecture rules, run by `cargo test` (crates/retarget-core/tests/architecture.rs).
+# When a review catches a structural mistake, add the rule here so it is never caught by hand again.
+# A layer that does not fit is deleted together with its scope below.
+#
+# Scope paths are relative to this file's directory (the workspace root). `crate::`, `self::` and
+# `super::` in a member crate resolve against that crate's `src/` (arch-lint 0.10+), so one file
+# here covers every crate under crates/. References across crates (`use other_crate::..`) are not
+# followed: a rule between crates is a `[dependencies]` decision, not an arch-lint one.
+
+preset = "recommended"
+
+[rules.no-sync-io]
+# Blocking I/O is fine in a synchronous program. Turn this on when the code runs on an async runtime.
+enabled = false
+
+[[scopes]]
+name = "domain"
+paths = ["crates/retarget-core/src/domain/**"]
+
+[[scopes]]
+name = "app"
+paths = ["crates/retarget-core/src/app/**"]
+
+# The adapters live in the umbrella crate, so that the core has no I/O dependency.
+# They reach the core with `retarget_core::..`, which arch-lint does not follow (see above);
+# the core's side of that boundary is `crates/retarget-core/tests/dependencies.rs`.
+[[scopes]]
+name = "infra"
+paths = ["crates/retarget/src/infra/**"]
+
+# Top layer first. app may use domain, domain uses neither.
+[[layering]]
+name = "core-layers"
+order = ["app", "domain"]
+message = "core depends inward only: app -> domain."
+
+[[restrict-use]]
+name = "pure-domain"
+scope = "domain"
+deny = [
+    "std::fs", "std::fs::**",
+    "std::process", "std::process::**",
+    "std::env", "std::env::**",
+    "std::net", "std::net::**",
+    "std::time::SystemTime", "std::time::Instant",
+    "tokio::fs", "tokio::fs::**", "tokio::process", "tokio::process::**", "tokio::net", "tokio::net::**",
+    "rand", "rand::**", "git2", "git2::**", "reqwest", "reqwest::**",
+    "chrono::Utc::now", "chrono::Local::now",
+]
+message = "domain is pure: take I/O, time and randomness as values, or through a port of app implemented in infra."
+
+[[restrict-use]]
+name = "no-io-in-app"
+scope = "app"
+deny = [
+    "std::fs", "std::fs::**",
+    "std::process", "std::process::**",
+    "std::env", "std::env::**",
+    "std::net", "std::net::**",
+    "std::time::SystemTime", "std::time::Instant",
+    "tokio::fs", "tokio::fs::**", "tokio::process", "tokio::process::**", "tokio::net", "tokio::net::**",
+    "rand", "rand::**", "git2", "git2::**", "reqwest", "reqwest::**",
+    "chrono::Utc::now", "chrono::Local::now",
+]
+message = "app reaches the outside world through its ports; implement them in infra."

@@ -1,0 +1,16 @@
+[package]
+name = "retarget-core"
+description = "Core (SDK) of retarget: Tune a coding agent's harness one setting at a time, and keep only what measurably helps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+arch-lint.workspace = true

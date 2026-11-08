@@ -114,6 +114,10 @@ impl Adoption {
         self.state = AdoptionState::Applying(stage);
         self.window = Some(window);
     }
+    /// A new window at the same stage (a newer harness: watch afresh).
+    pub(crate) fn reopen(&mut self, window: Window) {
+        self.window = Some(window);
+    }
     pub(crate) fn keep(&mut self) {
         self.state = AdoptionState::Kept;
     }

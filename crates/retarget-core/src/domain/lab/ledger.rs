@@ -44,8 +44,8 @@ use crate::domain::mechanism::{EvidenceClass, Mechanism};
 use crate::domain::name::{
     Digest, ExperimentId, HarnessVersion, LeverKey, PositionId, Scope, WindowId,
 };
-use crate::domain::places::Places;
-use crate::domain::put_back::{Baseline, PutBack};
+use crate::domain::places::{PlaceEvent, Places, PlacesError};
+use crate::domain::put_back::Baseline;
 
 /// What must happen before a step given up on may be tried again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,20 +165,8 @@ pub enum LedgerEvent {
     SurrogateHit(Mechanism),
     /// A mechanism's terms did not.
     SurrogateMiss(Mechanism),
-    /// A write of a lever's place may go ahead.
-    WriteApproved(LeverKey, Option<Digest>),
-    /// A lever's place was written.
-    Written(LeverKey, Digest),
-    /// Someone edited a lever's place; it is blocked at this position.
-    ExternalEditFound(LeverKey, PositionId),
-    /// A change has to be put back to this position.
-    PutBackDue(LeverKey, PositionId),
-    /// Putting a change back may go ahead.
-    PutBackApproved(LeverKey),
-    /// A change was put back.
-    PutBackDone(LeverKey),
-    /// A person accepted their edit as the lever's place.
-    ExternalEditResolved(LeverKey),
+    /// A step of writing or putting back a lever's place.
+    Place(PlaceEvent),
     /// A lever was retired.
     LeverRetired(LeverKey),
 }
@@ -238,15 +226,9 @@ pub enum LedgerError {
     /// Neither the experiment nor a watch writes this lever.
     #[error("nothing writes lever `{0}`")]
     NoActive(LeverKey),
-    /// The lever has nothing to put back.
-    #[error("lever `{0}` has nothing to put back")]
-    NothingToPutBack(LeverKey),
-    /// The write was not approved first.
-    #[error("the write of lever `{0}` was not approved")]
-    NotApproved(LeverKey),
-    /// The lever is not blocked by an edit.
-    #[error("lever `{0}` is not blocked")]
-    NotBlocked(LeverKey),
+    /// A step of writing was refused.
+    #[error(transparent)]
+    Places(#[from] PlacesError),
     /// An event does not fit the state it is folded into.
     #[error("an event does not fit the ledger: {0}")]
     UnfoldableEvent(&'static str),
@@ -450,10 +432,10 @@ impl Ledger {
                             .map(|w| (w.window.kind().clone(), w.experiment.clone()))
                     })
                     .ok_or_else(|| LedgerError::NoActive(lever.clone()))?;
-                match self.places.check(&lever, current.as_ref()) {
-                    PutBack::Proceed => Ok(vec![LedgerEvent::WriteApproved(lever, current)]),
-                    PutBack::ExternalEdit => {
-                        let from = experiment.spec().from().clone();
+                let from = experiment.spec().from().clone();
+                match self.places.prepare_write(&lever, current, from.clone()) {
+                    Ok(approved) => Ok(vec![LedgerEvent::Place(approved)]),
+                    Err(_) => {
                         let halted = TrustBreach::ExternalEdit;
                         let id = experiment.spec().id();
                         let mut events = match kind {
@@ -473,42 +455,34 @@ impl Ledger {
                                 LedgerEvent::ActiveClosed,
                             ],
                         };
-                        events.push(LedgerEvent::ExternalEditFound(lever, from));
+                        events.push(LedgerEvent::Place(PlaceEvent::ExternalEditFound(
+                            lever, from,
+                        )));
                         Ok(events)
                     }
                 }
             }
             Command::Written(lever, digest) => {
-                if self.places.write_approved(&lever) {
-                    Ok(vec![LedgerEvent::Written(lever, digest)])
-                } else {
-                    Err(LedgerError::NotApproved(lever))
-                }
-            }
-            Command::CheckPutBack(lever, current) => {
-                let to = self
+                let owned = self
+                    .active
+                    .as_ref()
+                    .is_some_and(|a| a.window.lever() == &lever)
+                    || self.watches.contains_key(&lever);
+                Ok(self
                     .places
-                    .due(&lever)
-                    .cloned()
-                    .ok_or_else(|| LedgerError::NothingToPutBack(lever.clone()))?;
-                Ok(match self.places.check(&lever, current.as_ref()) {
-                    PutBack::Proceed => vec![LedgerEvent::PutBackApproved(lever)],
-                    PutBack::ExternalEdit => vec![LedgerEvent::ExternalEditFound(lever, to)],
-                })
+                    .written(&lever, digest, owned)?
+                    .into_iter()
+                    .map(LedgerEvent::Place)
+                    .collect())
             }
-            Command::PutBackWritten(lever) => {
-                if self.places.put_back_approved(&lever) {
-                    Ok(vec![LedgerEvent::PutBackDone(lever)])
-                } else {
-                    Err(LedgerError::NotApproved(lever))
-                }
-            }
+            Command::CheckPutBack(lever, current) => Ok(vec![LedgerEvent::Place(
+                self.places.check_put_back(&lever, current)?,
+            )]),
+            Command::PutBackWritten(lever) => Ok(vec![LedgerEvent::Place(
+                self.places.put_back_written(&lever)?,
+            )]),
             Command::ResolveExternalEdit(lever) => {
-                if self.places.is_blocked(&lever) {
-                    Ok(vec![LedgerEvent::ExternalEditResolved(lever)])
-                } else {
-                    Err(LedgerError::NotBlocked(lever))
-                }
+                Ok(vec![LedgerEvent::Place(self.places.resolve(&lever)?)])
             }
             Command::CloseWatch(lever) => {
                 if self.watches.contains_key(&lever) {
@@ -549,9 +523,8 @@ impl Ledger {
 
     fn put_back_if_written(&self, experiment: &Experiment, events: &mut Vec<LedgerEvent>) {
         let spec = experiment.spec();
-        let lever = spec.lever().key();
-        if self.places.wrote(lever) {
-            events.push(LedgerEvent::PutBackDue(lever.clone(), spec.from().clone()));
+        if let Some(due) = self.places.closed(spec.lever().key(), spec.from()) {
+            events.push(LedgerEvent::Place(due));
         }
     }
 
@@ -765,30 +738,7 @@ impl Ledger {
                 .retain(|g| !(&g.lever == lever && &g.position == position)),
             LedgerEvent::SurrogateHit(m) => self.surrogates.entry(*m).or_default().hits += 1,
             LedgerEvent::SurrogateMiss(m) => self.surrogates.entry(*m).or_default().misses += 1,
-            LedgerEvent::WriteApproved(lever, current) => {
-                self.places.approve_write(lever, *current);
-            }
-            LedgerEvent::Written(lever, digest) => {
-                if !self.places.written(lever, *digest) {
-                    return Err(LedgerError::UnfoldableEvent(
-                        "a write that was not approved",
-                    ));
-                }
-            }
-            LedgerEvent::ExternalEditFound(lever, to) => {
-                self.places.external_edit(lever, to.clone());
-            }
-            LedgerEvent::PutBackDue(lever, to) => {
-                self.places.put_back_due(lever, to.clone());
-            }
-            LedgerEvent::PutBackApproved(lever) => {
-                if !self.places.approve_put_back(lever) {
-                    return Err(LedgerError::UnfoldableEvent("nothing due to put back"));
-                }
-            }
-            LedgerEvent::PutBackDone(lever) | LedgerEvent::ExternalEditResolved(lever) => {
-                self.places.forget(lever);
-            }
+            LedgerEvent::Place(event) => self.places.apply(event)?,
             LedgerEvent::LeverRetired(lever) => {
                 self.retired.insert(lever.clone());
             }
@@ -853,8 +803,29 @@ mod tests {
         );
         assert_eq!(
             l.decide(Command::Written(lever.clone(), digest(2))),
-            Err(LedgerError::NotApproved(lever))
+            Err(LedgerError::Places(PlacesError::NotApproved(lever)))
         );
+    }
+
+    #[test]
+    fn a_write_that_lands_after_a_revert_is_put_back() {
+        let mut l = ledger();
+        l.execute(Command::Start(Box::new(spec()), None)).unwrap();
+        let lever = spec().lever().key().clone();
+        // approved, then the trial trips before the adapter writes
+        l.execute(Command::PrepareWrite(lever.clone(), None))
+            .unwrap();
+        let mut rng = Gen::new(23);
+        feed(&mut l, 100, &mut rng, |_, arm| {
+            Sample::new(100, 100, arm == Arm::Control)
+        });
+        l.execute(Command::Evaluate).unwrap();
+        assert!(l.active().is_none());
+        assert!(l.pending_put_back().is_empty());
+        // the write lands late: it is recorded and goes back at once
+        l.execute(Command::Written(lever.clone(), digest(6)))
+            .unwrap();
+        assert_eq!(l.pending_put_back(), vec![(&lever, spec().from())]);
     }
 
     #[test]
@@ -951,10 +922,10 @@ mod tests {
         assert_eq!(
             l.decide(Command::CheckPutBack(lever.clone(), Some(digest(8))))
                 .unwrap(),
-            vec![LedgerEvent::ExternalEditFound(
+            vec![LedgerEvent::Place(PlaceEvent::ExternalEditFound(
                 lever.clone(),
                 spec().from().clone()
-            )]
+            ))]
         );
         l.execute(Command::CheckPutBack(lever.clone(), Some(digest(4))))
             .unwrap();

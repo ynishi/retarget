@@ -10,6 +10,7 @@
 //! LoadCatalogue ──> Found(findings, current positions) ──> AdoptionShown (+ StageAdvanced if automatic)
 //! Allow(technique) ──> StageAdvanced (first stage)
 //! Record / Evaluate ──> fit ──> StageAdvanced (Full) | AdoptionKept | AdoptionUnfit + PutBackDue
+//! a newer harness ──> the windows of kept techniques reopen (as the Lab's watches do)
 //! ```
 //!
 //! # Invariants
@@ -21,6 +22,8 @@
 //!   found, nor written in the user's own scope (it stays shown).
 //! - A technique that did not fit is not adopted again until the harness or
 //!   the catalogue is newer than when it failed.
+//! - A kept technique is put back only when it is shown not to fit; reaching
+//!   the maximum of its window undecided leaves it kept.
 //! - What a technique is expected to do comes from the catalogue only.
 //!
 //! # Errors
@@ -38,12 +41,11 @@ use crate::domain::mechanism::Mechanism;
 use crate::domain::name::{
     AdoptionId, Digest, HarnessVersion, LeverKey, PositionId, Scope, TechniqueId, WindowId,
 };
-use crate::domain::places::Places;
+use crate::domain::places::{PlaceEvent, Places, PlacesError};
 use crate::domain::product::adoption::{Adoption, AdoptionState, UnfitReason};
 use crate::domain::product::catalogue::{Catalogue, OnUndecided, Stage};
 use crate::domain::product::finding::Finding;
 use crate::domain::product::fit::{FitCall, Reading, fit};
-use crate::domain::put_back::PutBack;
 
 /// A technique that did not fit, and when it may be tried again.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,8 +56,6 @@ pub struct Unfit {
     pub reason: UnfitReason,
     /// The catalogue's version then; a newer one reopens it.
     pub catalogue: u32,
-    /// The harness's version then; a newer one reopens it.
-    pub harness: Option<HarnessVersion>,
 }
 
 /// Something the portfolio decided or recorded.
@@ -69,6 +69,8 @@ pub enum PortfolioEvent {
     AdoptionShown(AdoptionId, TechniqueId, PositionId),
     /// An adoption moved to a stage, with the window it is checked on.
     StageAdvanced(LeverKey, Stage, Window),
+    /// A kept adoption's window was replaced, at the same stage.
+    WindowReopened(LeverKey, Window),
     /// A window reached a call.
     FitReached(LeverKey, FitCall),
     /// An adoption fits and is kept.
@@ -81,20 +83,8 @@ pub enum PortfolioEvent {
     RunRecorded(ObservedRun),
     /// A newer harness version was seen.
     HarnessChanged(HarnessVersion),
-    /// A write of a lever's place may go ahead.
-    WriteApproved(LeverKey, Option<Digest>),
-    /// A lever's place was written.
-    Written(LeverKey, Digest),
-    /// Someone edited a lever's place; it is blocked at this position.
-    ExternalEditFound(LeverKey, PositionId),
-    /// A change has to be put back to this position.
-    PutBackDue(LeverKey, PositionId),
-    /// Putting a change back may go ahead.
-    PutBackApproved(LeverKey),
-    /// A change was put back.
-    PutBackDone(LeverKey),
-    /// A person accepted their edit as the lever's place.
-    ExternalEditResolved(LeverKey),
+    /// A step of writing or putting back a lever's place.
+    Place(PlaceEvent),
 }
 
 /// What the portfolio is asked to do.
@@ -138,15 +128,9 @@ pub enum PortfolioError {
     /// No applied adoption writes this lever.
     #[error("nothing writes lever `{0}`")]
     NotApplied(LeverKey),
-    /// The write was not approved first.
-    #[error("the write of lever `{0}` was not approved")]
-    NotApproved(LeverKey),
-    /// The lever has nothing to put back.
-    #[error("lever `{0}` has nothing to put back")]
-    NothingToPutBack(LeverKey),
-    /// The lever is not blocked by an edit.
-    #[error("lever `{0}` is not blocked")]
-    NotBlocked(LeverKey),
+    /// A step of writing was refused.
+    #[error(transparent)]
+    Places(#[from] PlacesError),
     /// An event does not fit the state it is folded into.
     #[error("an event does not fit the portfolio: {0}")]
     UnfoldableEvent(&'static str),
@@ -164,6 +148,13 @@ pub struct Portfolio {
     findings: Vec<Finding>,
     places: Places,
     runs: Vec<ObservedRun>,
+}
+
+/// What a call does to an adoption.
+enum Next {
+    Advance,
+    Keep,
+    Unfit(UnfitReason),
 }
 
 impl Portfolio {
@@ -253,6 +244,10 @@ impl Portfolio {
         self.unfit.iter().any(|u| &u.technique == technique)
     }
 
+    fn places_event(event: PlaceEvent) -> PortfolioEvent {
+        PortfolioEvent::Place(event)
+    }
+
     /// Decide a command: the events that record it, or why it is refused.
     pub fn decide(&self, command: PortfolioCommand) -> Result<Vec<PortfolioEvent>, PortfolioError> {
         let mut ids = self.next_window;
@@ -264,65 +259,16 @@ impl Portfolio {
         match command {
             PortfolioCommand::LoadCatalogue(catalogue) => {
                 let version = catalogue.version();
-                let mut events = Vec::new();
+                let mut events = vec![PortfolioEvent::CatalogueLoaded(catalogue)];
                 for u in &self.unfit {
                     if version > u.catalogue {
                         events.push(PortfolioEvent::RetryReopened(u.technique.clone()));
                     }
                 }
-                events.insert(0, PortfolioEvent::CatalogueLoaded(catalogue));
                 Ok(events)
             }
             PortfolioCommand::Found(findings, current, first_id) => {
-                let catalogue = self.catalogue()?;
-                let found: BTreeSet<_> = findings.iter().map(|f| f.pattern.clone()).collect();
-                let mut used = self.mechanisms_in_use();
-                let mut levers: BTreeSet<LeverKey> = self.adoptions.keys().cloned().collect();
-                let mut events = vec![PortfolioEvent::Found(findings.clone())];
-                let mut next_adoption = first_id;
-                for finding in &findings {
-                    let chosen = catalogue.for_pattern(&finding.pattern).find(|t| {
-                        let lever = t.lever().key();
-                        !t.contraindications().iter().any(|c| found.contains(c))
-                            && !levers.contains(lever)
-                            && t.mechanisms().is_disjoint(&used)
-                            && !self.is_unfit(t.id())
-                            && !self.places.is_pending(lever)
-                            && current.get(lever).is_some_and(|at| at != t.to())
-                    });
-                    let Some(technique) = chosen else { continue };
-                    let lever = technique.lever().key().clone();
-                    let from =
-                        current
-                            .get(&lever)
-                            .cloned()
-                            .ok_or(PortfolioError::UnfoldableEvent(
-                                "a chosen lever has no position",
-                            ))?;
-                    let id = AdoptionId::new(next_adoption);
-                    next_adoption += 1;
-                    events.push(PortfolioEvent::AdoptionShown(
-                        id,
-                        technique.id().clone(),
-                        from.clone(),
-                    ));
-                    let applicable =
-                        technique.lever().surface().applicability() == Applicability::Apply;
-                    if technique.automatic() && applicable {
-                        let adoption = Adoption::shown(id, technique.clone(), from);
-                        let stage = adoption.first_stage();
-                        if let Some(window) = adoption.window_for(next_id(), stage) {
-                            events.push(PortfolioEvent::StageAdvanced(
-                                lever.clone(),
-                                stage,
-                                window,
-                            ));
-                        }
-                    }
-                    used.extend(technique.mechanisms().iter().copied());
-                    levers.insert(lever);
-                }
-                Ok(events)
+                self.decide_found(findings, &current, first_id, &mut next_id)
             }
             PortfolioCommand::Allow(technique) => {
                 let adoption = self
@@ -350,9 +296,16 @@ impl Portfolio {
                     None => events.push(PortfolioEvent::HarnessChanged(version)),
                     Some(known) if version > known => {
                         events.push(PortfolioEvent::HarnessChanged(version));
+                        // every technique that did not fit gets another chance
                         for u in &self.unfit {
-                            if u.harness.is_none_or(|h| version > h) {
-                                events.push(PortfolioEvent::RetryReopened(u.technique.clone()));
+                            events.push(PortfolioEvent::RetryReopened(u.technique.clone()));
+                        }
+                        // kept techniques are watched afresh on the new version
+                        for (lever, adoption) in &self.adoptions {
+                            if adoption.state() == AdoptionState::Kept
+                                && let Some(window) = adoption.window_for(next_id(), Stage::Full)
+                            {
+                                events.push(PortfolioEvent::WindowReopened(lever.clone(), window));
                             }
                         }
                     }
@@ -360,107 +313,143 @@ impl Portfolio {
                 }
                 Ok(events)
             }
-            PortfolioCommand::Evaluate => {
-                let mut events = Vec::new();
-                for (lever, adoption) in &self.adoptions {
-                    let state = adoption.state();
-                    if state == AdoptionState::Shown {
-                        continue;
-                    }
-                    let (call, _) = fit(adoption, &self.runs);
-                    let on_undecided = adoption.technique().fit().on_undecided;
-                    let next = match (call, state) {
-                        (FitCall::Pending, _) => continue,
-                        (FitCall::Fits, AdoptionState::Applying(Stage::Partial(_))) => {
-                            Step::Advance
-                        }
-                        (FitCall::Fits, AdoptionState::Applying(_)) => Step::Keep,
-                        (FitCall::Fits, _) => continue,
-                        (FitCall::Unfit(reason), _) => Step::Unfit(reason),
-                        (FitCall::Undecided, _) if on_undecided == OnUndecided::PutBack => {
-                            Step::Unfit(UnfitReason::Undecided)
-                        }
-                        (FitCall::Undecided, AdoptionState::Applying(Stage::Partial(_))) => {
-                            Step::Advance
-                        }
-                        (FitCall::Undecided, AdoptionState::Applying(_)) => Step::Keep,
-                        (FitCall::Undecided, _) => continue,
-                    };
-                    events.push(PortfolioEvent::FitReached(lever.clone(), call));
-                    match next {
-                        Step::Advance => {
-                            if let Some(window) = adoption.window_for(next_id(), Stage::Full) {
-                                events.push(PortfolioEvent::StageAdvanced(
-                                    lever.clone(),
-                                    Stage::Full,
-                                    window,
-                                ));
-                            }
-                        }
-                        Step::Keep => events.push(PortfolioEvent::AdoptionKept(lever.clone())),
-                        Step::Unfit(reason) => {
-                            events.push(PortfolioEvent::AdoptionUnfit(lever.clone(), reason));
-                            if self.places.wrote(lever) {
-                                events.push(PortfolioEvent::PutBackDue(
-                                    lever.clone(),
-                                    adoption.from().clone(),
-                                ));
-                            }
-                        }
-                    }
-                }
-                Ok(events)
-            }
+            PortfolioCommand::Evaluate => Ok(self.decide_evaluate(&mut next_id)),
             PortfolioCommand::PrepareWrite(lever, current) => {
                 let adoption = self
                     .adoptions
                     .get(&lever)
                     .filter(|a| a.window().is_some())
                     .ok_or_else(|| PortfolioError::NotApplied(lever.clone()))?;
-                Ok(match self.places.check(&lever, current.as_ref()) {
-                    PutBack::Proceed => vec![PortfolioEvent::WriteApproved(lever, current)],
-                    PutBack::ExternalEdit => vec![
-                        PortfolioEvent::AdoptionUnfit(
-                            lever.clone(),
-                            UnfitReason::Halted(TrustBreach::ExternalEdit),
-                        ),
-                        PortfolioEvent::ExternalEditFound(lever, adoption.from().clone()),
-                    ],
-                })
+                let from = adoption.from().clone();
+                Ok(
+                    match self.places.prepare_write(&lever, current, from.clone()) {
+                        Ok(approved) => vec![Self::places_event(approved)],
+                        Err(_) => vec![
+                            PortfolioEvent::AdoptionUnfit(
+                                lever.clone(),
+                                UnfitReason::Halted(TrustBreach::ExternalEdit),
+                            ),
+                            Self::places_event(PlaceEvent::ExternalEditFound(lever, from)),
+                        ],
+                    },
+                )
             }
             PortfolioCommand::Written(lever, digest) => {
-                if self.places.write_approved(&lever) {
-                    Ok(vec![PortfolioEvent::Written(lever, digest)])
-                } else {
-                    Err(PortfolioError::NotApproved(lever))
-                }
-            }
-            PortfolioCommand::CheckPutBack(lever, current) => {
-                let to = self
+                let owned = self
+                    .adoptions
+                    .get(&lever)
+                    .is_some_and(|a| a.window().is_some());
+                Ok(self
                     .places
-                    .due(&lever)
-                    .cloned()
-                    .ok_or_else(|| PortfolioError::NothingToPutBack(lever.clone()))?;
-                Ok(match self.places.check(&lever, current.as_ref()) {
-                    PutBack::Proceed => vec![PortfolioEvent::PutBackApproved(lever)],
-                    PutBack::ExternalEdit => vec![PortfolioEvent::ExternalEditFound(lever, to)],
-                })
+                    .written(&lever, digest, owned)?
+                    .into_iter()
+                    .map(Self::places_event)
+                    .collect())
             }
-            PortfolioCommand::PutBackWritten(lever) => {
-                if self.places.put_back_approved(&lever) {
-                    Ok(vec![PortfolioEvent::PutBackDone(lever)])
-                } else {
-                    Err(PortfolioError::NotApproved(lever))
+            PortfolioCommand::CheckPutBack(lever, current) => Ok(vec![Self::places_event(
+                self.places.check_put_back(&lever, current)?,
+            )]),
+            PortfolioCommand::PutBackWritten(lever) => Ok(vec![Self::places_event(
+                self.places.put_back_written(&lever)?,
+            )]),
+            PortfolioCommand::ResolveExternalEdit(lever) => {
+                Ok(vec![Self::places_event(self.places.resolve(&lever)?)])
+            }
+        }
+    }
+
+    fn decide_found(
+        &self,
+        findings: Vec<Finding>,
+        current: &BTreeMap<LeverKey, PositionId>,
+        first_id: u128,
+        next_id: &mut impl FnMut() -> WindowId,
+    ) -> Result<Vec<PortfolioEvent>, PortfolioError> {
+        let catalogue = self.catalogue()?;
+        let found: BTreeSet<_> = findings.iter().map(|f| f.pattern.clone()).collect();
+        let mut used = self.mechanisms_in_use();
+        let mut levers: BTreeSet<LeverKey> = self.adoptions.keys().cloned().collect();
+        let mut events = vec![PortfolioEvent::Found(findings.clone())];
+        let mut next_adoption = first_id;
+        for finding in &findings {
+            let chosen = catalogue.for_pattern(&finding.pattern).find(|t| {
+                let lever = t.lever().key();
+                !t.contraindications().iter().any(|c| found.contains(c))
+                    && !levers.contains(lever)
+                    && t.mechanisms().is_disjoint(&used)
+                    && !self.is_unfit(t.id())
+                    && !self.places.is_pending(lever)
+                    && current.get(lever).is_some_and(|at| at != t.to())
+            });
+            let Some(technique) = chosen else { continue };
+            let lever = technique.lever().key().clone();
+            let Some(from) = current.get(&lever).cloned() else {
+                continue;
+            };
+            let id = AdoptionId::new(next_adoption);
+            next_adoption += 1;
+            events.push(PortfolioEvent::AdoptionShown(
+                id,
+                technique.id().clone(),
+                from.clone(),
+            ));
+            let applicable = technique.lever().surface().applicability() == Applicability::Apply;
+            if technique.automatic() && applicable {
+                let adoption = Adoption::shown(id, technique.clone(), from);
+                let stage = adoption.first_stage();
+                if let Some(window) = adoption.window_for(next_id(), stage) {
+                    events.push(PortfolioEvent::StageAdvanced(lever.clone(), stage, window));
                 }
             }
-            PortfolioCommand::ResolveExternalEdit(lever) => {
-                if self.places.is_blocked(&lever) {
-                    Ok(vec![PortfolioEvent::ExternalEditResolved(lever)])
-                } else {
-                    Err(PortfolioError::NotBlocked(lever))
+            used.extend(technique.mechanisms().iter().copied());
+            levers.insert(lever);
+        }
+        Ok(events)
+    }
+
+    fn decide_evaluate(&self, next_id: &mut impl FnMut() -> WindowId) -> Vec<PortfolioEvent> {
+        let mut events = Vec::new();
+        for (lever, adoption) in &self.adoptions {
+            let state = adoption.state();
+            if state == AdoptionState::Shown {
+                continue;
+            }
+            let (call, _) = fit(adoption, &self.runs);
+            let put_back_undecided =
+                adoption.technique().fit().on_undecided == OnUndecided::PutBack;
+            let partial = matches!(state, AdoptionState::Applying(Stage::Partial(_)));
+            let next = match (call, state) {
+                (FitCall::Pending, _) => continue,
+                (FitCall::Unfit(reason), _) => Next::Unfit(reason),
+                // a kept technique stays kept until it is shown not to fit
+                (FitCall::Fits | FitCall::Undecided, AdoptionState::Kept) => continue,
+                (FitCall::Undecided, _) if put_back_undecided => {
+                    Next::Unfit(UnfitReason::Undecided)
+                }
+                (FitCall::Fits | FitCall::Undecided, _) if partial => Next::Advance,
+                (FitCall::Fits | FitCall::Undecided, _) => Next::Keep,
+            };
+            events.push(PortfolioEvent::FitReached(lever.clone(), call));
+            match next {
+                Next::Advance => {
+                    if let Some(window) = adoption.window_for(next_id(), Stage::Full) {
+                        events.push(PortfolioEvent::StageAdvanced(
+                            lever.clone(),
+                            Stage::Full,
+                            window,
+                        ));
+                    }
+                }
+                Next::Keep => events.push(PortfolioEvent::AdoptionKept(lever.clone())),
+                Next::Unfit(reason) => {
+                    events.push(PortfolioEvent::AdoptionUnfit(lever.clone(), reason));
+                    if let Some(due) = self.places.closed(lever, adoption.from()) {
+                        events.push(Self::places_event(due));
+                    }
                 }
             }
         }
+        events
     }
 
     fn bump(&mut self, window: &Window) {
@@ -485,11 +474,17 @@ impl Portfolio {
             }
             PortfolioEvent::StageAdvanced(lever, stage, window) => {
                 self.bump(window);
-                let adoption = self
-                    .adoptions
+                self.adoptions
                     .get_mut(lever)
-                    .ok_or(PortfolioError::UnfoldableEvent("no adoption to advance"))?;
-                adoption.advance(*stage, window.clone());
+                    .ok_or(PortfolioError::UnfoldableEvent("no adoption to advance"))?
+                    .advance(*stage, window.clone());
+            }
+            PortfolioEvent::WindowReopened(lever, window) => {
+                self.bump(window);
+                self.adoptions
+                    .get_mut(lever)
+                    .ok_or(PortfolioError::UnfoldableEvent("no adoption to reopen"))?
+                    .reopen(window.clone());
             }
             PortfolioEvent::FitReached(..) => {}
             PortfolioEvent::AdoptionKept(lever) => {
@@ -508,7 +503,6 @@ impl Portfolio {
                     technique: adoption.technique().id().clone(),
                     reason: *reason,
                     catalogue,
-                    harness: self.harness,
                 });
             }
             PortfolioEvent::RetryReopened(technique) => {
@@ -516,38 +510,10 @@ impl Portfolio {
             }
             PortfolioEvent::RunRecorded(run) => self.runs.push(run.clone()),
             PortfolioEvent::HarnessChanged(version) => self.harness = Some(*version),
-            PortfolioEvent::WriteApproved(lever, current) => {
-                self.places.approve_write(lever, *current);
-            }
-            PortfolioEvent::Written(lever, digest) => {
-                if !self.places.written(lever, *digest) {
-                    return Err(PortfolioError::UnfoldableEvent(
-                        "a write that was not approved",
-                    ));
-                }
-            }
-            PortfolioEvent::ExternalEditFound(lever, to) => {
-                self.places.external_edit(lever, to.clone());
-            }
-            PortfolioEvent::PutBackDue(lever, to) => self.places.put_back_due(lever, to.clone()),
-            PortfolioEvent::PutBackApproved(lever) => {
-                if !self.places.approve_put_back(lever) {
-                    return Err(PortfolioError::UnfoldableEvent("nothing due to put back"));
-                }
-            }
-            PortfolioEvent::PutBackDone(lever) | PortfolioEvent::ExternalEditResolved(lever) => {
-                self.places.forget(lever);
-            }
+            PortfolioEvent::Place(event) => self.places.apply(event)?,
         }
         Ok(())
     }
-}
-
-/// What a call does to an adoption.
-enum Step {
-    Advance,
-    Keep,
-    Unfit(UnfitReason),
 }
 
 #[cfg(test)]
@@ -558,13 +524,25 @@ mod tests {
     use crate::domain::product::finding::OFF_MAIN_CACHE_REWRITES;
     use crate::domain::testkit::{self, Gen, Sample};
 
-    fn portfolio() -> Portfolio {
+    fn catalogue_with(on_undecided: OnUndecided) -> Catalogue {
+        let mut parts = testkit::technique_parts();
+        parts.fit.on_undecided = on_undecided;
+        Catalogue::new(1, vec![Technique::new(parts).unwrap()]).unwrap()
+    }
+
+    fn portfolio_with(catalogue: Catalogue) -> Portfolio {
         let mut p = Portfolio::new("repo".parse().unwrap());
-        let catalogue =
-            Catalogue::new(1, vec![Technique::new(testkit::technique_parts()).unwrap()]).unwrap();
         p.execute(PortfolioCommand::LoadCatalogue(Box::new(catalogue)))
             .unwrap();
         p
+    }
+
+    fn portfolio() -> Portfolio {
+        portfolio_with(catalogue_with(OnUndecided::KeepWatching))
+    }
+
+    fn lever() -> LeverKey {
+        "cache.off_main_ttl".parse().unwrap()
     }
 
     fn found(p: &mut Portfolio) -> Vec<PortfolioEvent> {
@@ -573,10 +551,24 @@ mod tests {
             share: 0.3,
             runs: 20,
         };
-        let lever: LeverKey = "cache.off_main_ttl".parse().unwrap();
-        let current = BTreeMap::from([(lever, "5m".parse().unwrap())]);
+        let current = BTreeMap::from([(lever(), "5m".parse().unwrap())]);
         p.execute(PortfolioCommand::Found(vec![finding], current, 100))
             .unwrap()
+    }
+
+    fn allow_and_write(p: &mut Portfolio, log: &mut Vec<PortfolioEvent>) {
+        log.extend(
+            p.execute(PortfolioCommand::Allow("subagent-ttl-1h".parse().unwrap()))
+                .unwrap(),
+        );
+        log.extend(
+            p.execute(PortfolioCommand::PrepareWrite(lever(), None))
+                .unwrap(),
+        );
+        log.extend(
+            p.execute(PortfolioCommand::Written(lever(), Digest::new([1; 32])))
+                .unwrap(),
+        );
     }
 
     fn feed(
@@ -622,60 +614,79 @@ mod tests {
     }
 
     #[test]
+    fn a_contraindicated_technique_is_not_shown() {
+        let mut parts = testkit::technique_parts();
+        parts.contraindications = vec!["rework".parse().unwrap()];
+        let mut p =
+            portfolio_with(Catalogue::new(1, vec![Technique::new(parts).unwrap()]).unwrap());
+        let findings = vec![
+            Finding {
+                pattern: OFF_MAIN_CACHE_REWRITES.parse().unwrap(),
+                share: 0.3,
+                runs: 20,
+            },
+            Finding {
+                pattern: "rework".parse().unwrap(),
+                share: 0.2,
+                runs: 20,
+            },
+        ];
+        let current = BTreeMap::from([(lever(), "5m".parse().unwrap())]);
+        let events = p
+            .execute(PortfolioCommand::Found(findings, current, 1))
+            .unwrap();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, PortfolioEvent::AdoptionShown(..)))
+        );
+    }
+
+    #[test]
     fn a_fitting_technique_goes_from_shown_to_kept_and_replays() {
         let mut p = portfolio();
+        let catalogue = p.catalogue.clone().unwrap();
         let mut log = Vec::new();
         log.extend(found(&mut p));
-        let technique: TechniqueId = "subagent-ttl-1h".parse().unwrap();
-        log.extend(p.execute(PortfolioCommand::Allow(technique)).unwrap());
-        let lever: LeverKey = "cache.off_main_ttl".parse().unwrap();
-        log.extend(
-            p.execute(PortfolioCommand::PrepareWrite(lever.clone(), None))
-                .unwrap(),
-        );
-        log.extend(
-            p.execute(PortfolioCommand::Written(
-                lever.clone(),
-                Digest::new([1; 32]),
-            ))
-            .unwrap(),
-        );
+        allow_and_write(&mut p, &mut log);
         let mut rng = Gen::new(31);
         feed(&mut p, 1200, &mut rng, &mut log, (1000, 400));
-        assert_eq!(p.adoptions()[&lever].state(), AdoptionState::Kept);
-        let reading = &p.readings()[0];
-        assert!(reading.observed.unwrap().get() < 0.0);
+        assert_eq!(p.adoptions()[&lever()].state(), AdoptionState::Kept);
+        assert!(p.readings()[0].observed.unwrap().get() < 0.0);
         // the catalogue was loaded before the log started
-        let rebuilt = Portfolio::replay(
-            p.scope().clone(),
-            &[
-                vec![PortfolioEvent::CatalogueLoaded(Box::new(
-                    p.catalogue.clone().unwrap(),
-                ))],
-                log,
-            ]
-            .concat(),
-        )
-        .unwrap();
-        assert_eq!(rebuilt, p);
+        let mut all = vec![PortfolioEvent::CatalogueLoaded(Box::new(catalogue))];
+        all.extend(log);
+        assert_eq!(Portfolio::replay(p.scope().clone(), &all).unwrap(), p);
+    }
+
+    #[test]
+    fn a_kept_technique_is_not_put_back_for_reaching_its_maximum() {
+        let mut parts = testkit::technique_parts();
+        parts.fit.on_undecided = OnUndecided::PutBack;
+        let mut stopping = testkit::stopping_parts();
+        stopping.max_runs = 200;
+        stopping.max_confirm_runs = 200;
+        parts.fit.stopping = crate::domain::measure::StoppingRule::new(stopping).unwrap();
+        let mut p =
+            portfolio_with(Catalogue::new(1, vec![Technique::new(parts).unwrap()]).unwrap());
+        let mut log = Vec::new();
+        found(&mut p);
+        allow_and_write(&mut p, &mut log);
+        let mut rng = Gen::new(33);
+        // clearly cheaper at first, then indistinguishable past the maximum
+        feed(&mut p, 400, &mut rng, &mut log, (1000, 400));
+        assert_eq!(p.adoptions()[&lever()].state(), AdoptionState::Kept);
+        feed(&mut p, 400, &mut rng, &mut log, (1000, 1000));
+        assert_eq!(p.adoptions()[&lever()].state(), AdoptionState::Kept);
     }
 
     #[test]
     fn a_technique_that_makes_things_worse_is_put_back_and_not_tried_again() {
         let mut p = portfolio();
         found(&mut p);
-        let lever: LeverKey = "cache.off_main_ttl".parse().unwrap();
-        p.execute(PortfolioCommand::Allow("subagent-ttl-1h".parse().unwrap()))
-            .unwrap();
-        p.execute(PortfolioCommand::PrepareWrite(lever.clone(), None))
-            .unwrap();
-        p.execute(PortfolioCommand::Written(
-            lever.clone(),
-            Digest::new([2; 32]),
-        ))
-        .unwrap();
-        let mut rng = Gen::new(32);
         let mut log = Vec::new();
+        allow_and_write(&mut p, &mut log);
+        let mut rng = Gen::new(32);
         feed(&mut p, 1200, &mut rng, &mut log, (500, 1500));
         assert!(p.adoptions().is_empty());
         assert_eq!(p.unfit().len(), 1);
@@ -686,5 +697,27 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, PortfolioEvent::AdoptionShown(..)))
         );
+    }
+
+    #[test]
+    fn a_newer_harness_reopens_the_window_of_a_kept_technique() {
+        let mut p = portfolio();
+        let mut log = Vec::new();
+        found(&mut p);
+        allow_and_write(&mut p, &mut log);
+        let mut rng = Gen::new(34);
+        feed(&mut p, 1200, &mut rng, &mut log, (1000, 400));
+        let before = p.windows()[0].id();
+        let window = p.windows()[0].clone();
+        let mut run = testkit::observed(&window, Arm::Treatment, Sample::new(400, 500, true));
+        testkit::set_harness(&mut run, "9.0.0");
+        let events = p.execute(PortfolioCommand::Record(Box::new(run))).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, PortfolioEvent::WindowReopened(..)))
+        );
+        assert_ne!(p.windows()[0].id(), before);
+        assert_eq!(p.adoptions()[&lever()].state(), AdoptionState::Kept);
     }
 }

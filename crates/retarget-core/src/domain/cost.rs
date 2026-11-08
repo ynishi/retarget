@@ -23,6 +23,8 @@
 //!
 //! # Errors
 //!
+//! - [`CostError::NoRequests`]: the run made no model request; it did no work
+//!   and is not counted (it would be a free success).
 //! - [`CostError::Unknown`]: a request has neither a reported cost nor priced
 //!   parts, so the run cannot be counted (the adapter sent too little).
 //! - [`CostError::Overflow`]: a sum did not fit (a broken input).
@@ -154,6 +156,9 @@ pub enum CostError {
     /// A request has neither a reported cost nor priced parts.
     #[error("a request has neither a reported cost nor priced parts")]
     Unknown,
+    /// The run made no model request, so there is nothing to count.
+    #[error("the run made no model request")]
+    NoRequests,
     /// A sum did not fit.
     #[error(transparent)]
     Overflow(#[from] MoneyError),
@@ -186,6 +191,9 @@ impl CostBreakdown {
         };
         walk(run.root(), &mut tally)?;
         let origin = match (tally.reported, tally.priced) {
+            // a run with no request cost nothing and did no work; counting it
+            // would be a free success for whichever arm it landed in
+            (0, 0) => return Err(CostError::NoRequests),
             (_, 0) => CostOrigin::Reported,
             (0, _) => CostOrigin::Priced,
             _ => CostOrigin::Mixed,

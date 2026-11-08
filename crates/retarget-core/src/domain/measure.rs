@@ -373,7 +373,8 @@ pub(crate) enum Gate {
     Tripped,
     Halted(TrustBreach),
     Pending,
-    /// Too few runs, and the maximum is reached.
+    /// Too few runs, and the maximum is reached: the window cannot be
+    /// decided, and every caller closes it as undecided without reading it.
     Exhausted,
 }
 
@@ -395,10 +396,16 @@ pub(crate) fn gate(
             return Gate::Tripped;
         }
     }
+    // a measure no run carries (a harness that sends no duration) is not read
+    let measures: Vec<Measure> = measures
+        .iter()
+        .copied()
+        .filter(|m| *m == Measure::Objective || !eligible.of(*m).is_empty())
+        .collect();
     // (b) the split of every measure that will be read; valid at any time
     let alpha_trust = stopping.alpha().trust() / 3.0;
     let alpha_srm = alpha_trust / measures.len().max(1) as f64;
-    for measure in measures {
+    for measure in &measures {
         let c = counts(&eligible.of(*measure));
         if let SrmCheck::Broken(_) = sequential_srm(
             u64::from(c.treatment),
@@ -576,7 +583,8 @@ pub(crate) fn guardrails(
             trivial,
         )
     };
-    let (duration, _) = rise(
+    // no run with a duration (a harness that does not send it) cannot be shown worse
+    let (duration, no_duration) = rise(
         &eligible.of(Measure::Duration),
         &|r| r.duration.unwrap_or(0.0),
         margins.duration.get(),
@@ -599,7 +607,7 @@ pub(crate) fn guardrails(
     };
     let named = [
         (Guardrail::SuccessRate, success_rate, false),
-        (Guardrail::Duration, duration, false),
+        (Guardrail::Duration, duration, no_duration),
         (Guardrail::Rework, rework, no_rework),
     ];
     if let Some((guardrail, _, _)) = named

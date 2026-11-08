@@ -189,6 +189,10 @@ pub fn evaluate(experiment: &Experiment, window: &Window, runs: &[ObservedRun]) 
         evidence,
         guardrails: guard.intervals(),
     };
+    // the gate let the window through only to say it cannot be decided
+    if gate == Gate::Exhausted {
+        return Verdict::Revert(RevertReason::Exhausted, response);
+    }
     if let GuardrailCheck::Breached(g, _) = guard {
         return Verdict::Revert(RevertReason::GuardrailBreached(g), response);
     }
@@ -215,7 +219,7 @@ pub fn evaluate(experiment: &Experiment, window: &Window, runs: &[ObservedRun]) 
     if call == ObjectiveCall::NoEffect {
         return Verdict::Revert(RevertReason::NoEffect, response);
     }
-    if at_max || gate == Gate::Exhausted {
+    if at_max {
         return Verdict::Revert(RevertReason::Exhausted, response);
     }
     Verdict::Pending
@@ -246,6 +250,9 @@ pub fn confirm(experiment: &Experiment, window: &Window, runs: &[ObservedRun]) -
         evidence: EvidenceDetail::Behavioral,
         guardrails: guard.intervals(),
     };
+    if gate == Gate::Exhausted {
+        return Confirmation::Revert(RevertReason::Exhausted, response);
+    }
     if let GuardrailCheck::Breached(g, _) = guard {
         return Confirmation::Revert(RevertReason::GuardrailBreached(g), response);
     }
@@ -255,9 +262,7 @@ pub fn confirm(experiment: &Experiment, window: &Window, runs: &[ObservedRun]) -
             Confirmation::Keep(response)
         }
         ObjectiveCall::NoEffect => Confirmation::Revert(RevertReason::NoEffect, response),
-        _ if gate == Gate::Exhausted || all.len() as u32 >= max => {
-            Confirmation::Revert(RevertReason::Exhausted, response)
-        }
+        _ if all.len() as u32 >= max => Confirmation::Revert(RevertReason::Exhausted, response),
         _ => Confirmation::Pending,
     }
 }

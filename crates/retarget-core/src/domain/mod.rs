@@ -1,11 +1,46 @@
 //! The rules and types of the problem, in its own words.
 //!
+//! The aim is the performance of a customer's agent or swarm: what a
+//! successful task costs, how long it takes, how often it succeeds. Swarms
+//! waste in recurring ways (a subagent's cache that expires and is written
+//! again, the same context handed to several subagents, reasoning spent on a
+//! small task), and each way has fixes. Statistics, rules, machine learning and
+//! AI are tools toward that aim; which one is used is decided by what it does
+//! for the performance, not by how rigorous it is.
+//!
 //! A **lever** is one thing about how the agent runs that can be changed: a
 //! setting of the harness, how context is handled, how deeply the model
-//! thinks, which model a role gets, what an instruction says. An
-//! **experiment** moves one lever by one step and reaches a **verdict**. The
-//! **ledger** of a scope holds its experiments and what it has given up on,
-//! and allows one active experiment at a time.
+//! thinks, which model a role gets, what an instruction says. A **technique**
+//! is a known fix: when a **pattern** shows in a customer's runs, move a lever
+//! this way. A **catalogue** holds techniques with what they are expected to do
+//! and how to tell whether they fit. The **ledger** of a scope holds what was
+//! applied, what was put back and why.
+//!
+//! # Two layers
+//!
+//! ```text
+//! Lab (in house)                                  product (at the customer)
+//!   explore, and prove with robust statistics       runs ──> find a pattern
+//!   which techniques work, where, by how much       ──> apply its technique (shown, some runs, all)
+//!         │                                         ──> check the fit against the catalogue's limits
+//!         └── catalogue (a versioned value) ───────>    ──> keep | put back, try the next | keep watching
+//! ```
+//!
+//! - **The product** applies what the catalogue knows and adapts it to one
+//!   customer: it finds a pattern, applies the technique in a way that can be
+//!   put back, and checks that it fits with the limits the catalogue fixed for
+//!   it (a holdout of runs, a failure limit, a window), without proving the
+//!   technique again from scratch. What it expects and what it sees so far are
+//!   always shown; nothing waits silently for a verdict.
+//! - **The Lab** is where techniques are found and proven: experiments with
+//!   random assignment and statistics that stay valid under repeated looks
+//!   (see [The Lab](#the-lab-how-a-technique-is-proven)). Proving a small
+//!   effect takes months of runs, which is fine in house and not in front of a
+//!   customer.
+//! - The framework is open: the core, the adapters, the Lab's machinery and a
+//!   catalogue built from public facts. Data, a tuned catalogue and the
+//!   features that find patterns are not part of this repository; they plug in
+//!   as a catalogue value and as implementations of a port.
 //!
 //! # What is fixed here, and what an adapter fills in
 //!
@@ -24,8 +59,8 @@
 //!   handed to several subagents, the volume of reasoning, the price of a
 //!   model, rework after a failure). Which terms a mechanism lowers, and which
 //!   it may raise, is knowledge of this domain, not of any harness.
-//! - **The specification of a verdict**: the objective, the guardrails, the
-//!   kind of evidence a lever needs, and the stopping rule.
+//! - **What a decision rests on**: the objective, the guardrails, the kind of
+//!   evidence a lever needs, and when to stop.
 //!
 //! What a harness calls an attribute, which event carries the parent of a
 //! subagent, what a token costs: those are how a measure is taken, and they
@@ -36,19 +71,21 @@
 //! surface it is written to, the mechanisms it claims to act on, the role it
 //! is scoped to. Adding a lever changes the catalogue, not this module.
 //!
-//! # How a verdict is reached
+//! # The Lab: how a technique is proven
 //!
-//! The objective is the cost per successful run, within one task class. It is
-//! the number that matters and the slowest to settle: a run's cost varies
-//! widely from task to task, so a fixed before-and-after comparison of whole
-//! runs needs far more runs than one user produces before it can tell a small
-//! improvement from noise. Judging on it alone leaves nearly every experiment
-//! pending. Judging only what can be measured exactly leaves most levers out.
-//! So a lever is judged on the evidence its kind allows:
+//! An **experiment** moves one lever by one step and reaches a **verdict**
+//! ([`experiment`], [`verdict`], [`stats`]). The objective is the cost per
+//! successful run, within one task class. It is the number that matters and
+//! the slowest to settle: a run's cost varies widely from task to task, so a
+//! fixed before-and-after comparison of whole runs needs far more runs than
+//! one user produces before it can tell a small improvement from noise. This
+//! is why proving belongs to the Lab, and why the product applies what was
+//! proven instead. In the Lab, a lever is judged on the evidence its kind
+//! allows:
 //!
 //! - A lever that only changes what the same work costs (a cache lifetime) is
-//!   judged on the cost terms its mechanism moves, measured on the requests of
-//!   every run, which vary far less from run to run than the whole cost does.
+//!   judged on the cost terms its mechanism moves, per unit of the terms the
+//!   step leaves alone, so that the size of a run does not drown the change.
 //!   Which mechanisms only change prices is a table of this domain
 //!   ([`mechanism::evidence_of`]). It is kept **provisionally**, and
 //!   only when the terms it should lower fall past the threshold and the terms

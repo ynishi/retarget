@@ -185,7 +185,8 @@ pub fn observed(window: &Window, arm: Arm, sample: Sample) -> ObservedRun {
                 c(sample.cache_write),
                 c(sample.cache_read),
                 c(0),
-                c(0),
+                // output the cache levers leave alone: the size of the run
+                c(300),
             )),
         },
         ..request(0, 0)

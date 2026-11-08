@@ -611,18 +611,21 @@ pub fn evaluate(experiment: &Experiment, window: &Window, runs: &[ObservedRun]) 
             let terms = rows.of(Measure::Terms);
             let h = spec.hypothesis();
             let net_set = h.lowers().union(h.may_raise());
-            let one = |_: &Row| 1.0;
+            // the cells the step does not move measure the size of a run, so
+            // the terms are compared per unit of it, not as raw amounts
+            let untouched = TermSet::all().difference(&net_set);
+            let size = sum_of(&untouched);
             let lowers = means(
                 &terms,
                 window.p(),
                 1.0 - delta,
                 1.0,
                 &sum_of(h.lowers()),
-                &one,
+                &size,
                 look,
             )
             .interval;
-            let net = means(&terms, window.p(), 1.0, 1.0, &sum_of(&net_set), &one, look).interval;
+            let net = means(&terms, window.p(), 1.0, 1.0, &sum_of(&net_set), &size, look).interval;
             (lowers, EvidenceDetail::Priced { lowers, net })
         }
         EvidenceClass::Behavioral => (

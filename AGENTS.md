@@ -15,14 +15,20 @@
   ports) and has no I/O dependency; the adapters are `crates/retarget/src/infra`.
   `arch-lint.toml` and `crates/retarget-core/tests/dependencies.rs` enforce it.
   A new adapter, store or harness goes in the umbrella crate, never in the core.
-- A verdict follows a rule fixed before the change, and the measure that
-  decides is the cost per successful run within one task class. A lever that
-  only changes prices is kept provisionally on the cost terms its mechanism
-  moves, then confirmed or reverted on that measure; a lever that changes
-  behaviour is judged on it directly. Guardrails must not get worse, and a
-  broken trust check stops an experiment without a verdict. A token saving
-  the bill does not show is never kept. The crate doc of
-  `retarget_core::domain` has the reasoning.
+- The aim is the performance of the customer's agent or swarm (what a
+  successful task costs, how long it takes, how often it succeeds).
+  Statistics, rules, machine learning and AI are tools toward it, chosen by
+  what they do for that performance, not by their rigour. A token saving the
+  bill does not show is never kept.
+- Two layers: the product finds a pattern, applies the catalogue's technique
+  in a way that can be put back, and checks the fit against the limits the
+  catalogue fixed; the Lab proves techniques with experiments. Heavy proof
+  stays in the Lab. The crate doc of `retarget_core::domain` has the
+  reasoning.
+- The framework is open; data, a tuned catalogue and the features that find
+  patterns are not in this repository and never go into its tree (not even
+  ignored). They plug in as a catalogue value and as implementations of a
+  port.
 - The domain names no harness: attribute names, event shapes, prices and the
   catalogue of levers are the adapters'. Parts that need an AI's judgement are
   ports that propose; a verdict never goes through them.

@@ -1,13 +1,16 @@
-//! Tune a coding agent's harness one setting at a time, and keep only what
-//! measurably helps.
+//! Find what wastes a coding agent's or a swarm's runs, apply the fix that is
+//! known for it, and keep it where it fits.
 //!
 //! retarget watches the telemetry a coding agent's harness already sends,
-//! changes one thing about how the agent runs, compares runs with and without
-//! the change, and keeps it only when the evidence clears a rule fixed in
-//! advance. Otherwise it puts the change back. The measure that decides is the
-//! cost per successful run; how a verdict is reached is in
-//! [`domain`]. It adds no proxy and no memory layer between the agent and its
-//! model.
+//! finds patterns of waste in it (a subagent's cache that expires and is
+//! written again, context handed to several subagents, reasoning spent on a
+//! small task), applies the technique a catalogue knows for each, and checks
+//! that it fits this customer: a technique that makes things worse is put back
+//! and the next one is tried. What matters is the performance of the agent
+//! (what a successful task costs, how long it takes, how often it succeeds);
+//! the two layers behind it, the product and the Lab where techniques are
+//! proven, are described in [`domain`]. It adds no proxy and no memory layer
+//! between the agent and its model.
 //!
 //! The umbrella crate: the one name users depend on, and the
 //! `retarget` command (`src/main.rs`, behind the default `cli`
@@ -21,8 +24,17 @@
 //! - **lever**: one thing about how the agent runs that retarget may change (a
 //!   setting, how context is handled, reasoning depth, the model of a role, an
 //!   instruction).
-//! - **experiment**: one step of one lever, with its hypothesis, threshold and
-//!   stopping rule fixed before it starts. Nothing is written or put back over
+//! - **pattern**: a recurring way a customer's runs waste, found from features
+//!   of the runs.
+//! - **technique**: a known fix for a pattern: a step of a lever, with what it
+//!   is expected to do, when not to use it, and how to tell whether it fits.
+//! - **catalogue**: a versioned set of techniques. A public one ships with
+//!   retarget; a tuned one can be plugged in.
+//! - **fit**: whether a technique works for one customer, checked against the
+//!   limits its catalogue entry fixed.
+//! - **Lab**: where techniques are found and proven, with experiments.
+//! - **experiment**: in the Lab, one step of one lever, with its hypothesis,
+//!   threshold and stopping rule fixed before it starts. Nothing is written or put back over
 //!   a person's edit; the experiment then stops and says so.
 //! - **run**: one session of the agent, taken as one task, observed as a tree
 //!   of agent nodes and their requests, tool calls and incidents.

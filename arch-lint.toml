@@ -35,6 +35,27 @@ paths = ["crates/retarget-core/src/app/**"]
 name = "infra"
 paths = ["crates/retarget/src/infra/**"]
 
+# The two layers of the domain share its common modules and never use each other.
+[[scopes]]
+name = "lab"
+paths = ["crates/retarget-core/src/domain/lab/**"]
+
+[[scopes]]
+name = "product"
+paths = ["crates/retarget-core/src/domain/product/**"]
+
+[[restrict-use]]
+name = "product-not-lab"
+scope = "product"
+deny = ["crate::domain::lab", "crate::domain::lab::**"]
+message = "the product applies what the Lab proved, as a catalogue; it never uses the Lab."
+
+[[restrict-use]]
+name = "lab-not-product"
+scope = "lab"
+deny = ["crate::domain::product", "crate::domain::product::**"]
+message = "the Lab proves techniques; it never uses the product."
+
 # Top layer first. app may use domain, domain uses neither.
 [[layering]]
 name = "core-layers"

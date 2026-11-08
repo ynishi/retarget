@@ -74,7 +74,7 @@
 //! # The Lab: how a technique is proven
 //!
 //! An **experiment** moves one lever by one step and reaches a **verdict**
-//! ([`experiment`], [`verdict`], [`stats`]). The objective is the cost per
+//! ([`lab::experiment`], [`lab::verdict`], [`stats`]). The objective is the cost per
 //! successful run, within one task class. It is the number that matters and
 //! the slowest to settle: a run's cost varies widely from task to task, so a
 //! fixed before-and-after comparison of whole runs needs far more runs than
@@ -151,21 +151,26 @@
 //! # Map
 //!
 //! ```text
-//! name, money ──> run ──> cost ──> mechanism ──> lever ──> experiment ──> verdict ──> ledger
-//!                 stats (leaf)                     put_back (uses name only) ──────────┘
+//! shared   name, money ──> run ──> cost ──> mechanism ──> lever ──> assign
+//!          stats ──> measure (which runs count, the gate, guardrails, estimators)
+//!          put_back ──> places (the guard on writing a lever's place)
+//! lab      experiment ──> verdict ──> ledger                 (uses shared only)
+//! product  catalogue ──> finding ──> adoption ──> fit ──> portfolio   (uses shared only)
 //! ```
 
+pub mod assign;
 pub mod cost;
-pub mod experiment;
-pub mod ledger;
+pub mod lab;
 pub mod lever;
+pub mod measure;
 pub mod mechanism;
 pub mod money;
 pub mod name;
+pub mod places;
+pub mod product;
 pub mod put_back;
 pub mod run;
 pub mod stats;
-pub mod verdict;
 
 #[cfg(test)]
 mod testkit;

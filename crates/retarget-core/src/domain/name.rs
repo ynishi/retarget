@@ -126,9 +126,33 @@ name!(
     ModelId, "model id", is_model
 );
 name!(
-    /// The scope a ledger belongs to: one experiment at a time is allowed per scope.
+    /// The scope a ledger or a portfolio belongs to.
     Scope, "scope", is_key
 );
+name!(
+    /// The name of a pattern, joining what finds it to the techniques for it.
+    PatternId, "pattern id", is_key
+);
+name!(
+    /// The stable name of a technique in a catalogue.
+    TechniqueId, "technique id", is_key
+);
+
+/// The id of an adoption of a technique in a portfolio. The caller makes it,
+/// so the domain never draws one itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AdoptionId(u128);
+
+impl AdoptionId {
+    /// An id from the number the caller made.
+    pub fn new(id: u128) -> Self {
+        Self(id)
+    }
+    /// The number.
+    pub fn get(self) -> u128 {
+        self.0
+    }
+}
 
 /// The version of the harness a run started and ended on. Runs that span a
 /// change of version count for neither arm, and a newer version may reopen

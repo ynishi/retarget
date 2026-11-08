@@ -37,3 +37,38 @@
 //!         run ends ──> its tree is recorded ──> evaluate the active experiment
 //! read:   projection of the events ──> status line, notice
 //! ```
+//!
+//! # Ports of the product
+//!
+//! What finds a pattern and where a catalogue comes from are ports, so that
+//! tuned detectors and catalogues plug in from outside the repository. The
+//! public ones are [`PublicDetector`] and a catalogue an adapter reads from a
+//! file.
+
+use crate::domain::product::catalogue::Catalogue;
+use crate::domain::product::finding::{Finding, public_findings};
+use crate::domain::run::Run;
+
+/// Finds patterns of waste in recent runs.
+pub trait Detector {
+    /// The patterns found in these runs.
+    fn detect(&self, runs: &[Run]) -> Vec<Finding>;
+}
+
+/// Where the catalogue comes from.
+pub trait CatalogueSource {
+    /// Why the catalogue could not be had.
+    type Error: std::error::Error;
+    /// The catalogue to use now.
+    fn catalogue(&self) -> Result<Catalogue, Self::Error>;
+}
+
+/// The detectors of the public catalogue.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PublicDetector;
+
+impl Detector for PublicDetector {
+    fn detect(&self, runs: &[Run]) -> Vec<Finding> {
+        public_findings(runs)
+    }
+}

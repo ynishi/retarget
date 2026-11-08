@@ -1,25 +1,30 @@
-//! Drives a ledger end to end with simulated runs, as the app will: assign each
-//! run to an arm of the open window, check and write the lever's place, record
-//! the run, evaluate, and put a change back when the ledger says so.
+//! Drives the product end to end with simulated runs, as the app will, and
+//! prints what a person would see day by day: the patterns found, the
+//! technique shown with what it is expected to do, the stages it goes
+//! through, the reading so far, and what is put back.
 //!
 //! Run with `cargo run -p retarget-core --example simulate`.
 
 use std::collections::BTreeMap;
 use std::error::Error;
 
-use retarget_core::domain::experiment::{
-    AlphaSplit, Assigned, ConfirmMargin, ExperimentSpec, Margins, ObservedRun, SpecParts,
-    StoppingParts, StoppingRule, Threshold, TrustLimits,
-};
-use retarget_core::domain::ledger::{Command, Ledger, LedgerEvent, SurrogatePolicy};
+use retarget_core::domain::assign::{Assigned, ObservedRun};
 use retarget_core::domain::lever::{
-    ClaimWhen, Direction, Lever, MechanismClaim, Order, Positions, RoleScope, Step, Surface,
+    ClaimWhen, Lever, MechanismClaim, Order, Positions, RoleScope, Surface,
+};
+use retarget_core::domain::measure::{
+    AlphaSplit, Margins, StoppingParts, StoppingRule, TrustLimits,
 };
 use retarget_core::domain::mechanism::Mechanism;
 use retarget_core::domain::money::{Cost, TermCosts};
-use retarget_core::domain::name::{
-    Digest, ExperimentId, LeverKey, PositionId, Positive, Ratio, Share,
+use retarget_core::domain::name::{Digest, LeverKey, PositionId, Positive, Ratio};
+use retarget_core::domain::product::adoption::AdoptionState;
+use retarget_core::domain::product::catalogue::{
+    Catalogue, Expected, FitSpec, OnUndecided, Rollout, Source, Stage, Technique, TechniqueParts,
 };
+use retarget_core::domain::product::finding::{OFF_MAIN_CACHE_REWRITES, public_findings};
+use retarget_core::domain::product::fit::{Basis, Reading};
+use retarget_core::domain::product::portfolio::{Portfolio, PortfolioCommand, PortfolioEvent};
 use retarget_core::domain::run::{
     AgentNode, Effective, Element, Observed, Outcome, Request, RequestCost, Role, Run, RunParts,
     SizeBand, Snapshot, TaskClass, TokenUse,
@@ -52,19 +57,6 @@ impl Rng {
     }
 }
 
-/// How a scenario's runs come out, per position of the lever.
-struct World {
-    name: &'static str,
-    lever: Lever,
-    from: &'static str,
-    step: Step,
-    /// (off-main cache writes, cache reads, output) as multiples of the control's,
-    /// and the success rate, for the treatment position.
-    treatment: (f64, f64, f64, f64),
-    /// After how many runs a person edits the lever's place (if ever).
-    edit_at: Option<usize>,
-}
-
 fn pos(s: &str) -> R<PositionId> {
     Ok(s.parse()?)
 }
@@ -82,17 +74,40 @@ fn ttl_lever() -> R<Lever> {
     )?)
 }
 
-fn effort_lever() -> R<Lever> {
-    Ok(Lever::new(
-        "reasoning.effort".parse()?,
-        Positions::new(Order::Ordinal, vec![pos("low")?, pos("high")?])?,
-        Surface::ProjectSettings,
-        RoleScope::All,
-        vec![MechanismClaim {
-            mechanism: Mechanism::ReasoningVolume,
-            reduced_when: ClaimWhen::Down,
-        }],
-    )?)
+fn catalogue() -> R<Catalogue> {
+    let r = |v| Ratio::new(v);
+    let technique = Technique::new(TechniqueParts {
+        id: "subagent-ttl-1h".parse()?,
+        pattern: OFF_MAIN_CACHE_REWRITES.parse()?,
+        lever: ttl_lever()?,
+        to: pos("1h")?,
+        mechanisms: [Mechanism::CacheExpiry].into(),
+        expected: Expected::Range(-0.20, -0.05),
+        contraindications: vec![],
+        fit: FitSpec {
+            margin: r(0.05)?,
+            holdout: r(0.1)?,
+            stopping: StoppingRule::new(StoppingParts {
+                rho: Positive::new(1.0)?,
+                alpha: AlphaSplit::new(r(0.05)?, r(0.05)?, r(0.03)?)?,
+                min_runs_per_arm: 15,
+                min_successes_per_arm: 10,
+                max_runs: 600,
+                max_confirm_runs: 600,
+            })?,
+            trust: TrustLimits::new(Positive::new(100.0)?, r(0.2)?, r(0.2)?, 15)?,
+            margins: Margins {
+                success_rate: r(0.1)?,
+                duration: r(0.5)?,
+                rework: r(0.5)?,
+            },
+            on_undecided: OnUndecided::KeepWatching,
+        },
+        rollout: Rollout::Partial(r(0.5)?),
+        automatic: false,
+        source: Source::Lab,
+    })?;
+    Ok(Catalogue::new(1, vec![technique])?)
 }
 
 fn task_class() -> R<TaskClass> {
@@ -101,35 +116,6 @@ fn task_class() -> R<TaskClass> {
         language: "rust".parse()?,
         size: SizeBand::Medium,
     })
-}
-
-fn spec(world: &World) -> R<ExperimentSpec> {
-    let r = |v| Ratio::new(v);
-    Ok(ExperimentSpec::new(SpecParts {
-        id: ExperimentId::new(1),
-        lever: world.lever.clone(),
-        from: pos(world.from)?,
-        step: world.step.clone(),
-        threshold: Threshold(r(0.1)?),
-        confirm_margin: ConfirmMargin(Share::new(0.0)?),
-        stopping: StoppingRule::new(StoppingParts {
-            rho: Positive::new(1.0)?,
-            alpha: AlphaSplit::new(r(0.05)?, r(0.05)?, r(0.03)?)?,
-            min_runs_per_arm: 20,
-            min_successes_per_arm: 10,
-            max_runs: 1500,
-            max_confirm_runs: 1500,
-        })?,
-        margins: Margins {
-            success_rate: r(0.05)?,
-            duration: r(0.3)?,
-            rework: r(0.5)?,
-        },
-        trust: TrustLimits::new(Positive::new(100.0)?, r(0.2)?, r(0.2)?, 15)?,
-        trial_share: r(0.5)?,
-        holdout_share: r(0.2)?,
-        task_class: task_class()?,
-    })?)
 }
 
 fn digest_of(position: &PositionId) -> Digest {
@@ -163,22 +149,30 @@ fn request(cache_write: f64, cache_read: f64, output: f64) -> Request {
     }
 }
 
+/// A customer: how the technique's position changes their subagent's cache
+/// writes and reads, as multiples of the old position's.
+struct Customer {
+    name: &'static str,
+    writes: f64,
+    reads: f64,
+}
+
 /// One session: a main conversation and one subagent. A quarter of the cost
 /// is the subagent's cache writes, the rest cache reads and output.
-fn run(world: &World, lever: &LeverKey, position: &PositionId, rng: &mut Rng) -> R<Run> {
-    let treated = position.as_str() != world.from;
-    let (w, rd, out, success) = if treated {
-        world.treatment
+fn session(customer: &Customer, lever: &LeverKey, at: &PositionId, rng: &mut Rng) -> R<Run> {
+    let treated = at.as_str() == "1h";
+    let (w, rd) = if treated {
+        (customer.writes, customer.reads)
     } else {
-        (1.0, 1.0, 1.0, 0.85)
+        (1.0, 1.0)
     };
     let base = rng.session_cost();
-    let main = AgentNode::new(
+    let root = AgentNode::new(
         Role::Main,
         vec![Element::Request(request(
             0.0,
             0.35 * base * rd,
-            0.40 * base * out,
+            0.40 * base,
         ))],
         vec![AgentNode::new(
             Role::Sub("explorer".parse()?),
@@ -186,7 +180,7 @@ fn run(world: &World, lever: &LeverKey, position: &PositionId, rng: &mut Rng) ->
             vec![],
         )],
     );
-    let effective = Effective::new([(lever.clone(), Observed::Known(position.clone()))].into());
+    let effective = Effective::new([(lever.clone(), Observed::Known(at.clone()))].into());
     let snapshot = Snapshot {
         harness: "2.1.319".parse()?,
         effective,
@@ -194,7 +188,7 @@ fn run(world: &World, lever: &LeverKey, position: &PositionId, rng: &mut Rng) ->
     Ok(Run::new(RunParts {
         session: format!("s{}", rng.next()).parse()?,
         task_class: task_class()?,
-        outcome: if rng.unit() < success {
+        outcome: if rng.unit() < 0.85 {
             Outcome::Success
         } else {
             Outcome::Failure
@@ -202,328 +196,167 @@ fn run(world: &World, lever: &LeverKey, position: &PositionId, rng: &mut Rng) ->
         duration_ms: Observed::Known((600_000.0 * (0.5 * rng.normal()).exp()) as u64),
         start: snapshot.clone(),
         end: snapshot,
-        root: main,
+        root,
     })?)
 }
 
-fn describe(event: &LedgerEvent) -> Option<String> {
-    match event {
-        LedgerEvent::Decided(_, v) => {
-            if std::env::var_os("SIM_DEBUG").is_some() {
-                println!("{v:#?}");
-            }
-            Some(format!("trial: {}", short(&format!("{v:?}"))))
+fn describe(reading: &Reading) -> String {
+    let expected = match reading.expected {
+        Expected::Unproven => "not proven yet".to_string(),
+        Expected::Range(low, high) => format!("{:+.0}%..{:+.0}%", low * 100.0, high * 100.0),
+    };
+    let stage = match reading.state {
+        AdoptionState::Shown => "shown, waiting for you".to_string(),
+        AdoptionState::Applying(Stage::Partial(s)) => {
+            format!("on {:.0}% of sessions", s.get() * 100.0)
         }
-        LedgerEvent::Confirmed(_, c) => Some(format!("confirm: {}", short(&format!("{c:?}")))),
-        LedgerEvent::WatchDecided(l, v) => Some(format!("watch {l}: {}", short(&format!("{v:?}")))),
-        LedgerEvent::WatchOpened(..) => Some("watch opened (holdout 20%)".into()),
-        LedgerEvent::GivenUpAdded(g) => Some(format!("given up: {} -> {}", g.lever, g.position)),
-        LedgerEvent::PutBackDue(l, to) => Some(format!("put back due: {l} -> {to}")),
-        LedgerEvent::PutBackDone(l) => Some(format!("put back done: {l}")),
-        LedgerEvent::ExternalEditFound(l, _) => Some(format!("a person edited {l}: blocked")),
-        LedgerEvent::SurrogateHit(m) => Some(format!("terms of {m:?} foretold the bill")),
-        LedgerEvent::SurrogateMiss(m) => Some(format!("terms of {m:?} missed the bill")),
-        _ => None,
-    }
+        AdoptionState::Applying(_) => "on all sessions but a holdout".to_string(),
+        AdoptionState::Kept => "kept, watched against a holdout".to_string(),
+    };
+    let measure = match reading.basis {
+        Basis::CostTerms => "on the cache bill",
+        Basis::Objective => "per successful session",
+    };
+    let seen = match reading.observed {
+        Some(change) => format!(
+            "so far {:+.0}% {measure} ({} vs {} sessions)",
+            change.get() * 100.0,
+            reading.counts.treatment,
+            reading.counts.control
+        ),
+        None => "nothing measured yet".to_string(),
+    };
+    format!(
+        "{} · {stage} · expected {expected} · {seen}",
+        reading.technique
+    )
 }
 
-fn short(debug: &str) -> String {
-    // the verdict's name, and the relative change when there is one
-    let name: String = debug.chars().take_while(|c| *c != '(').collect();
-    let relative = debug
-        .split("RelativeChange(")
-        .nth(1)
-        .and_then(|rest| rest.split(')').next())
-        .and_then(|v| v.parse::<f64>().ok());
-    let reason = debug
-        .strip_prefix("Revert(")
-        .and_then(|rest| rest.split(',').next())
-        .map(|r| format!(" {r}"))
-        .unwrap_or_default();
-    match relative {
-        Some(r) => format!("{name}{reason} (cost per success {:+.1}%)", r * 100.0),
-        None => format!("{name}{reason}"),
-    }
-}
-
-fn simulate(world: World, seed: u64) -> R<()> {
-    println!("\n== {} ==", world.name);
+fn day_by_day(customer: Customer, seed: u64, per_day: usize, days: usize) -> R<()> {
+    println!("\n== {} ({per_day} sessions a day) ==", customer.name);
     let mut rng = Rng(seed);
-    let mut ledger = Ledger::new("demo".parse()?, SurrogatePolicy { min_misses: 2 });
-    let lever = world.lever.key().clone();
-    let mut file = digest_of(&pos(world.from)?);
-    ledger.execute(Command::Start(Box::new(spec(&world)?), Some(file)))?;
-    for n in 1..=4000usize {
-        if world.edit_at == Some(n) {
-            file = Digest::new([0xEE; 32]);
-        }
-        // put back what the ledger says to put back
-        for (l, to) in ledger
-            .pending_put_back()
-            .into_iter()
-            .map(|(l, to)| (l.clone(), to.clone()))
-            .collect::<Vec<_>>()
-        {
-            ledger.execute(Command::CheckPutBack(l.clone(), Some(file)))?;
-            if ledger.pending_put_back().iter().any(|(k, _)| **k == l) {
-                file = digest_of(&to);
-                print_events(n, &ledger.execute(Command::PutBackWritten(l))?);
-            }
-        }
-        let Some(window) = ledger.windows().first().map(|w| (*w).clone()) else {
-            println!("run {n:>4}: nothing left to assign; stopping");
-            break;
-        };
-        let position = if rng.unit() < window.p() {
-            window.treatment().clone()
-        } else {
-            window.control().clone()
-        };
-        let events = ledger.execute(Command::PrepareWrite(lever.clone(), Some(file)))?;
-        if events
-            .iter()
-            .any(|e| matches!(e, LedgerEvent::ExternalEditFound(..)))
-        {
-            print_events(n, &events);
-            continue;
-        }
-        file = digest_of(&position);
-        ledger.execute(Command::Written(lever.clone(), file))?;
-        let observed = ObservedRun {
-            run: run(&world, &lever, &position, &mut rng)?,
-            assigned: BTreeMap::from([(
-                lever.clone(),
-                Assigned {
-                    window: window.id(),
-                    position,
-                },
-            )]),
-        };
-        ledger.execute(Command::Record(Box::new(observed)))?;
-        if n % 10 == 0 {
-            print_events(n, &ledger.execute(Command::Evaluate)?);
-        }
-        if n >= 2500 && ledger.active().is_none() {
-            break;
-        }
-    }
-    Ok(())
-}
-
-/// What a person sees, day by day: the status line at the end of each day,
-/// and a notice at the start of the next session when something was decided.
-/// Only what the ledger exposes is used, so a gap here is a gap of the read side.
-fn day_by_day(world: World, seed: u64, runs_per_day: usize, days: usize) -> R<()> {
-    println!("\n== {} ({runs_per_day} sessions a day) ==", world.name);
-    let mut rng = Rng(seed);
-    let mut ledger = Ledger::new("demo".parse()?, SurrogatePolicy { min_misses: 2 });
-    let lever = world.lever.key().clone();
-    let mut file = digest_of(&pos(world.from)?);
-    ledger.execute(Command::Start(Box::new(spec(&world)?), Some(file)))?;
-    println!(
-        "day   0 │ notice: trying {lever} {} → next step, on half of the sessions",
-        world.from
-    );
-    let mut in_window = 0usize;
-    let mut window_id = None;
-    let mut last_line = String::new();
+    let lever: LeverKey = "cache.off_main_ttl".parse()?;
+    let mut at = pos("5m")?;
+    let mut file = digest_of(&at);
+    let mut portfolio = Portfolio::new("demo".parse()?);
+    portfolio.execute(PortfolioCommand::LoadCatalogue(Box::new(catalogue()?)))?;
+    let mut recent: Vec<Run> = Vec::new();
+    let mut allowed = false;
     for day in 1..=days {
         let mut notices = Vec::new();
-        for _ in 0..runs_per_day {
-            for (l, to) in ledger
+        for _ in 0..per_day {
+            // put back what the portfolio says to put back
+            for (l, to) in portfolio
+                .places()
                 .pending_put_back()
                 .into_iter()
                 .map(|(l, to)| (l.clone(), to.clone()))
                 .collect::<Vec<_>>()
             {
-                ledger.execute(Command::CheckPutBack(l.clone(), Some(file)))?;
-                file = digest_of(&to);
-                ledger.execute(Command::PutBackWritten(l.clone()))?;
+                portfolio.execute(PortfolioCommand::CheckPutBack(l.clone(), Some(file)))?;
+                at = to.clone();
+                file = digest_of(&at);
+                portfolio.execute(PortfolioCommand::PutBackWritten(l.clone()))?;
                 notices.push(format!("{l} put back to {to}"));
             }
-            let Some(window) = ledger.windows().first().map(|w| (*w).clone()) else {
-                break;
-            };
-            if window_id != Some(window.id()) {
-                window_id = Some(window.id());
-                in_window = 0;
-            }
-            let position = if rng.unit() < window.p() {
-                window.treatment().clone()
-            } else {
-                window.control().clone()
-            };
-            let events = ledger.execute(Command::PrepareWrite(lever.clone(), Some(file)))?;
-            if events
-                .iter()
-                .any(|e| matches!(e, LedgerEvent::ExternalEditFound(..)))
-            {
-                notices.extend(events.iter().filter_map(describe));
-                continue;
-            }
-            file = digest_of(&position);
-            ledger.execute(Command::Written(lever.clone(), file))?;
-            let observed = ObservedRun {
-                run: run(&world, &lever, &position, &mut rng)?,
-                assigned: BTreeMap::from([(
+            let window = portfolio.windows().first().map(|w| (*w).clone());
+            let mut assigned = BTreeMap::new();
+            if let Some(window) = window {
+                let position = if rng.unit() < window.p() {
+                    window.treatment().clone()
+                } else {
+                    window.control().clone()
+                };
+                portfolio.execute(PortfolioCommand::PrepareWrite(lever.clone(), Some(file)))?;
+                at = position.clone();
+                file = digest_of(&at);
+                portfolio.execute(PortfolioCommand::Written(lever.clone(), file))?;
+                assigned.insert(
                     lever.clone(),
                     Assigned {
                         window: window.id(),
                         position,
                     },
-                )]),
-            };
-            ledger.execute(Command::Record(Box::new(observed)))?;
-            in_window += 1;
-            notices.extend(
-                ledger
-                    .execute(Command::Evaluate)?
-                    .iter()
-                    .filter_map(describe),
-            );
-        }
-        let line = status_line(&ledger, in_window);
-        if !notices.is_empty() || line != last_line || day % 7 == 0 {
-            for n in &notices {
-                println!("day {day:>3} │ notice: {n}");
+                );
             }
-            println!("day {day:>3} │ status: {line}");
-            last_line = line;
+            let run = session(&customer, &lever, &at, &mut rng)?;
+            recent.push(run.clone());
+            portfolio.execute(PortfolioCommand::Record(Box::new(ObservedRun {
+                run,
+                assigned,
+            })))?;
+            for event in portfolio.execute(PortfolioCommand::Evaluate)? {
+                match event {
+                    PortfolioEvent::StageAdvanced(_, Stage::Full, _) => {
+                        notices.push("fits so far: moved to all sessions but a holdout".into())
+                    }
+                    PortfolioEvent::AdoptionKept(_) => notices.push("fits: kept".into()),
+                    PortfolioEvent::AdoptionUnfit(_, reason) => {
+                        notices.push(format!("does not fit you ({reason:?}): putting it back"))
+                    }
+                    _ => {}
+                }
+            }
         }
-        if ledger.active().is_none()
-            && ledger.watches().is_empty()
-            && ledger.pending_put_back().is_empty()
+        // once a day, look for patterns in the last day's sessions
+        let current = BTreeMap::from([(lever.clone(), at.clone())]);
+        let findings = public_findings(&recent);
+        recent.clear();
+        for event in portfolio.execute(PortfolioCommand::Found(findings, current, day as u128))? {
+            if let PortfolioEvent::AdoptionShown(..) = event {
+                notices.push("found: subagent cache written again and again".into());
+            }
+        }
+        // the person allows a shown technique the next day
+        if !allowed
+            && day > 1
+            && let Some(reading) = portfolio
+                .readings()
+                .into_iter()
+                .find(|r| r.state == AdoptionState::Shown)
         {
-            println!("day {day:>3} │ (nothing running; retarget is idle until the next proposal)");
-            break;
+            portfolio.execute(PortfolioCommand::Allow(reading.technique.clone()))?;
+            notices.push(format!("you allowed {}", reading.technique));
+            allowed = true;
         }
+        for n in &notices {
+            println!("day {day:>2} │ notice: {n}");
+        }
+        let readings = portfolio.readings();
+        let line = if readings.is_empty() {
+            "nothing applied".to_string()
+        } else {
+            readings
+                .iter()
+                .map(describe)
+                .collect::<Vec<_>>()
+                .join(" | ")
+        };
+        println!("day {day:>2} │ status: {line}");
     }
     Ok(())
 }
 
-/// The status line, from what the ledger exposes and nothing else.
-fn status_line(ledger: &Ledger, in_window: usize) -> String {
-    let mut parts = Vec::new();
-    if let Some(active) = ledger.active() {
-        let spec = active.experiment().spec();
-        let what = match active.window().kind() {
-            retarget_core::domain::experiment::WindowKind::Trial(_) => "trying",
-            retarget_core::domain::experiment::WindowKind::Confirm(_) => "confirming",
-            retarget_core::domain::experiment::WindowKind::Watch(_) => "watching",
-        };
-        parts.push(format!(
-            "{what} {} {}→{} · {in_window} sessions",
-            spec.lever().key(),
-            spec.from(),
-            spec.to()
-        ));
-    }
-    for (lever, watch) in ledger.watches() {
-        parts.push(format!("kept {lever}={}", watch.experiment().spec().to()));
-    }
-    if !ledger.blocked().is_empty() {
-        parts.push(format!("{} blocked by an edit", ledger.blocked().len()));
-    }
-    if !ledger.given_up().is_empty() {
-        parts.push(format!("{} given up", ledger.given_up().len()));
-    }
-    if parts.is_empty() {
-        "idle".into()
-    } else {
-        parts.join(" · ")
-    }
-}
-
-fn print_events(n: usize, events: &[LedgerEvent]) {
-    for line in events.iter().filter_map(describe) {
-        println!("run {n:>4}: {line}");
-    }
-}
-
 fn main() -> R<()> {
-    if std::env::args().any(|a| a == "ux") {
-        day_by_day(
-            World {
-                name: "cache TTL 5m -> 1h that really saves",
-                lever: ttl_lever()?,
-                from: "5m",
-                step: Step::Ordinal(Direction::Up),
-                treatment: (0.4, 1.05, 1.0, 0.85),
-                edit_at: None,
-            },
-            1,
-            15,
-            150,
-        )?;
-        day_by_day(
-            World {
-                name: "effort high -> low that changes nothing",
-                lever: effort_lever()?,
-                from: "high",
-                step: Step::Ordinal(Direction::Down),
-                treatment: (1.0, 1.0, 1.0, 0.85),
-                edit_at: None,
-            },
-            3,
-            15,
-            150,
-        )?;
-        return Ok(());
-    }
-    simulate(
-        World {
-            name: "cache TTL 5m -> 1h saves 60% of subagent cache writes",
-            lever: ttl_lever()?,
-            from: "5m",
-            step: Step::Ordinal(Direction::Up),
-            treatment: (0.4, 1.05, 1.0, 0.85),
-            edit_at: None,
+    day_by_day(
+        Customer {
+            name: "a customer the technique fits (writes -60%)",
+            writes: 0.4,
+            reads: 1.05,
         },
         1,
+        15,
+        21,
     )?;
-    simulate(
-        World {
-            name: "cache TTL cuts writes by 60%, but reads double (saving eaten)",
-            lever: ttl_lever()?,
-            from: "5m",
-            step: Step::Ordinal(Direction::Up),
-            treatment: (0.4, 1.6, 1.0, 0.85),
-            edit_at: None,
+    day_by_day(
+        Customer {
+            name: "a customer it does not fit (writes -60%, reads x2.5)",
+            writes: 0.4,
+            reads: 2.5,
         },
         2,
-    )?;
-    simulate(
-        World {
-            name: "effort high -> low changes nothing",
-            lever: effort_lever()?,
-            from: "high",
-            step: Step::Ordinal(Direction::Down),
-            treatment: (1.0, 1.0, 1.0, 0.85),
-            edit_at: None,
-        },
-        3,
-    )?;
-    simulate(
-        World {
-            name: "effort high -> low halves output but success drops to 70%",
-            lever: effort_lever()?,
-            from: "high",
-            step: Step::Ordinal(Direction::Down),
-            treatment: (1.0, 1.0, 0.5, 0.70),
-            edit_at: None,
-        },
-        4,
-    )?;
-    simulate(
-        World {
-            name: "a person edits the settings at run 150",
-            lever: ttl_lever()?,
-            from: "5m",
-            step: Step::Ordinal(Direction::Up),
-            treatment: (0.4, 1.05, 1.0, 0.85),
-            edit_at: Some(150),
-        },
-        5,
+        15,
+        21,
     )?;
     Ok(())
 }

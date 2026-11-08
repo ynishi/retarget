@@ -4,16 +4,19 @@
 
 use std::collections::BTreeMap;
 
-use crate::domain::experiment::{
-    AlphaSplit, Arm, Assigned, ConfirmMargin, Margins, ObservedRun, SpecParts, StoppingParts,
-    StoppingRule, Threshold, TrustLimits, Window,
-};
+use crate::domain::assign::{Arm, Assigned, ObservedRun, Window};
+use crate::domain::lab::experiment::{ConfirmMargin, SpecParts, Threshold};
 use crate::domain::lever::{
     ClaimWhen, Direction, Lever, MechanismClaim, Order, Positions, RoleScope, Step, Surface,
 };
+use crate::domain::measure::{AlphaSplit, Margins, StoppingParts, StoppingRule, TrustLimits};
 use crate::domain::mechanism::Mechanism;
 use crate::domain::money::{Cost, TermCosts};
 use crate::domain::name::{ExperimentId, Positive, Ratio, Share};
+use crate::domain::product::catalogue::{
+    Expected, FitSpec, OnUndecided, Rollout, Source, TechniqueParts,
+};
+use crate::domain::product::finding::OFF_MAIN_CACHE_REWRITES;
 use crate::domain::run::{
     AgentNode, Effective, Element, Observed, Outcome, Request, RequestCost, Role, Run, RunParts,
     SizeBand, Snapshot, TaskClass, TokenUse,
@@ -137,6 +140,34 @@ pub fn stopping_parts() -> StoppingParts {
         min_successes_per_arm: 10,
         max_runs: 2000,
         max_confirm_runs: 2000,
+    }
+}
+
+pub fn technique_parts() -> TechniqueParts {
+    let r = |v| Ratio::new(v).unwrap();
+    TechniqueParts {
+        id: "subagent-ttl-1h".parse().unwrap(),
+        pattern: OFF_MAIN_CACHE_REWRITES.parse().unwrap(),
+        lever: ttl_lever(),
+        to: "1h".parse().unwrap(),
+        mechanisms: [Mechanism::CacheExpiry].into(),
+        expected: Expected::Range(-0.2, -0.05),
+        contraindications: vec![],
+        fit: FitSpec {
+            margin: r(0.05),
+            holdout: r(0.2),
+            stopping: StoppingRule::new(stopping_parts()).unwrap(),
+            trust: TrustLimits::new(Positive::new(100.0).unwrap(), r(0.2), r(0.2), 20).unwrap(),
+            margins: Margins {
+                success_rate: r(0.1),
+                duration: r(0.5),
+                rework: r(0.5),
+            },
+            on_undecided: OnUndecided::KeepWatching,
+        },
+        rollout: Rollout::Partial(r(0.5)),
+        automatic: false,
+        source: Source::Lab,
     }
 }
 

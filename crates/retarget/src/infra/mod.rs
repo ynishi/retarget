@@ -22,9 +22,10 @@
 //!
 //! What may be written is bounded: an adapter writes only files of the
 //! harness's project scope that can be put back (its settings, its agent
-//! definitions, its project instructions), and records what a file held before
-//! writing it. Before putting a file back, the adapter checks that it still
-//! holds what retarget wrote; a file someone has edited since is not put back,
-//! and the experiment stops and says so. Nothing in the user's own scope is
+//! definitions, its project instructions). Before writing a lever's place in a
+//! file, or putting it back, the adapter reads what that place holds now (the
+//! value at the lever's key, or the section it owns, not the whole file) and
+//! hands its digest to the core, which decides whether the write may go ahead
+//! ([`retarget_core::domain::put_back`]). Nothing in the user's own scope is
 //! written: a setting there (the telemetry environment, the status line) is
 //! shown to the user, who sets it.

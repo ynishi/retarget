@@ -22,7 +22,8 @@
 //!   setting, how context is handled, reasoning depth, the model of a role, an
 //!   instruction).
 //! - **experiment**: one step of one lever, with its hypothesis, threshold and
-//!   stopping rule fixed before it starts.
+//!   stopping rule fixed before it starts. Nothing is written or put back over
+//!   a person's edit; the experiment then stops and says so.
 //! - **run**: one session of the agent, taken as one task, observed as a tree
 //!   of agent nodes and their requests, tool calls and incidents.
 //! - **arm**: the position of the lever a run is assigned to when it starts.
@@ -34,8 +35,9 @@
 //! - **holdout**: a small share of runs left on the old position, against which
 //!   a kept change goes on being measured.
 //! - **verdict**: pending, provisionally kept, kept, reverted (with its reason),
-//!   tripped (too many failures), aborted (the harness changed underneath), or
-//!   stopped because a file was edited by someone else.
+//!   tripped (too many failures), or halted (a trust check broke, or someone
+//!   edited the lever's file; the change is put back without a verdict when
+//!   that is safe).
 //! - **ledger**: the experiments of one scope, what it has given up on and when
 //!   it may try again, and how well each mechanism's terms have foretold the
 //!   objective.
@@ -68,8 +70,8 @@
 //! The telemetry retarget reads is sent by the user's own harness on the same
 //! machine, and is trusted as far as it is well-formed. retarget writes only
 //! files of the harness's project scope that it can put back, records what they
-//! held first, and does not put back a file someone has edited since (the rule
-//! is stated in [`infra`]). It never writes the user's own settings,
+//! held first, and does not write or put back a file someone has edited since
+//! (the rule is stated in [`domain::put_back`]). It never writes the user's own settings,
 //! permissions or credentials, and shows those to the user instead.
 //!
 //! # Compatibility

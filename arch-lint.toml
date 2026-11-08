@@ -15,6 +15,11 @@ preset = "recommended"
 # Blocking I/O is fine in a synchronous program. Turn this on when the code runs on an async runtime.
 enabled = false
 
+[rules.no-unwrap-expect]
+# The domain's test builders are a module of their own, compiled only for tests
+# (`#![cfg(test)]`), which the rule does not see.
+exclude_files = ["crates/retarget-core/src/domain/testkit.rs"]
+
 [[scopes]]
 name = "domain"
 paths = ["crates/retarget-core/src/domain/**"]

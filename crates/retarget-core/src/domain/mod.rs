@@ -46,9 +46,11 @@
 //! pending. Judging only what can be measured exactly leaves most levers out.
 //! So a lever is judged on the evidence its kind allows:
 //!
-//! - A lever that only changes what the same work costs (a cache lifetime, a
-//!   price tier) is judged on the cost terms its mechanism moves, measured per
-//!   request, of which every run has many. It is kept **provisionally**, and
+//! - A lever that only changes what the same work costs (a cache lifetime) is
+//!   judged on the cost terms its mechanism moves, measured on the requests of
+//!   every run, which vary far less from run to run than the whole cost does.
+//!   Which mechanisms only change prices is a table of this domain
+//!   ([`mechanism::evidence_of`]). It is kept **provisionally**, and
 //!   only when the terms it should lower fall past the threshold and the terms
 //!   it may raise do not eat the saving: a token saving that the bill does not
 //!   show is not kept (arXiv 2607.12161 v5: the largest compression cut tool
@@ -75,7 +77,9 @@
 //!   precedence overrides it), costs taken from different sources in the two
 //!   arms.
 //! - A provisional keep is confirmed or reverted on the objective, against a
-//!   small **holdout** of runs left on the old position. The holdout stays
+//!   small **holdout** of runs left on the old position, by a margin fixed
+//!   with the experiment, which may be smaller than the threshold the cost
+//!   terms had to clear, since those terms are only part of the bill. The holdout stays
 //!   after the lever is kept, so a saving that a later upgrade erases is
 //!   noticed.
 //! - The ledger records, for each mechanism, how often its cost terms foretold
@@ -106,3 +110,25 @@
 //! run's tree, the current time, a new id, the draw that picks an arm) is
 //! passed in by the caller. A value with rules is a type, not a `String`: an
 //! enum for a closed set, a newtype that checks its input for anything else.
+//!
+//! # Map
+//!
+//! ```text
+//! name, money ──> run ──> cost ──> mechanism ──> lever ──> experiment ──> verdict ──> ledger
+//!                 stats (leaf)                     put_back (uses name only) ──────────┘
+//! ```
+
+pub mod cost;
+pub mod experiment;
+pub mod ledger;
+pub mod lever;
+pub mod mechanism;
+pub mod money;
+pub mod name;
+pub mod put_back;
+pub mod run;
+pub mod stats;
+pub mod verdict;
+
+#[cfg(test)]
+mod testkit;

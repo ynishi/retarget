@@ -13,6 +13,10 @@ and this project adheres to
 - The domain of the core: runs as trees of agent nodes, cost terms and
   mechanisms, levers, the Lab's experiments and verdicts, and a ledger that
   writes and puts back a lever's place only where no person edited it.
+- The product layer: a catalogue of techniques, findings from detectors,
+  adoptions rolled out from shown to a share of runs to all but a holdout,
+  and a fit check that puts back a technique shown to make a customer's runs
+  worse. Detector and CatalogueSource ports let tuned ones plug in.
 
 ### Changed
 

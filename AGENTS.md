@@ -15,12 +15,21 @@
   ports) and has no I/O dependency; the adapters are `crates/retarget/src/infra`.
   `arch-lint.toml` and `crates/retarget-core/tests/dependencies.rs` enforce it.
   A new adapter, store or harness goes in the umbrella crate, never in the core.
-- A verdict is decided by the cost per successful session within one task
-  class, against a threshold fixed before the change. Token counts and cache
-  rates explain a verdict and never decide it. The crate doc of
+- A verdict follows a rule fixed before the change, and the measure that
+  decides is the cost per successful run within one task class. A lever that
+  only changes prices is kept provisionally on the cost terms its mechanism
+  moves, then confirmed or reverted on that measure; a lever that changes
+  behaviour is judged on it directly. Guardrails must not get worse, and a
+  broken trust check stops an experiment without a verdict. A token saving
+  the bill does not show is never kept. The crate doc of
   `retarget_core::domain` has the reasoning.
-- An adapter writes only the harness's project-scoped settings. The user's own
-  settings, permissions and credentials are shown to the user, never written.
+- The domain names no harness: attribute names, event shapes, prices and the
+  catalogue of levers are the adapters'. Parts that need an AI's judgement are
+  ports that propose; a verdict never goes through them.
+- An adapter writes only files of the harness's project scope that can be put
+  back, records what they held first, and does not put back a file a person has
+  edited since. The user's own settings, permissions and credentials are shown
+  to the user, never written.
 - Telemetry captured from a real session carries account and session
   identifiers. Anonymise it before it becomes a test fixture
   ([PUBLIC_DEVELOPMENT.md](PUBLIC_DEVELOPMENT.md#block)).

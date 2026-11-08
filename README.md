@@ -3,9 +3,9 @@
 Tune a coding agent's harness one setting at a time, and keep only what measurably helps.
 
 retarget watches the telemetry your coding agent's harness already sends,
-changes one of the harness's own settings, and keeps the change only when the
-cost per successful session fell past a threshold fixed in advance. Otherwise it
-puts the setting back.
+changes one thing about how the agent runs, compares runs with and without the
+change, and keeps it only when the evidence clears a rule fixed in advance — in
+the end, a lower cost per successful run. Otherwise it puts the change back.
 
 ## Crates
 

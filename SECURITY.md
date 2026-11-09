@@ -45,8 +45,8 @@ In scope: behaviour of retarget itself that lets input it does not
 control reach memory, resources, or data it should not — including a panic the
 API does not document — and a dependency with a known vulnerability that
 retarget actually exercises. For retarget in particular: writing a setting
-outside the harness's project scope, or a telemetry receiver reachable from
-another machine.
+outside the harness's project scope, putting back a file over a person's edit,
+or a telemetry receiver reachable from another machine.
 
 Out of scope: anything that assumes the attacker already controls the
 application embedding retarget, and bugs in third-party software — report

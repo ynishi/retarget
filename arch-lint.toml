@@ -15,6 +15,11 @@ preset = "recommended"
 # Blocking I/O is fine in a synchronous program. Turn this on when the code runs on an async runtime.
 enabled = false
 
+[rules.no-unwrap-expect]
+# The domain's test builders are a module of their own, compiled only for tests
+# (`#![cfg(test)]`), which the rule does not see.
+exclude_files = ["crates/retarget-core/src/domain/testkit.rs"]
+
 [[scopes]]
 name = "domain"
 paths = ["crates/retarget-core/src/domain/**"]
@@ -29,6 +34,27 @@ paths = ["crates/retarget-core/src/app/**"]
 [[scopes]]
 name = "infra"
 paths = ["crates/retarget/src/infra/**"]
+
+# The two layers of the domain share its common modules and never use each other.
+[[scopes]]
+name = "lab"
+paths = ["crates/retarget-core/src/domain/lab/**"]
+
+[[scopes]]
+name = "product"
+paths = ["crates/retarget-core/src/domain/product/**"]
+
+[[restrict-use]]
+name = "product-not-lab"
+scope = "product"
+deny = ["crate::domain::lab", "crate::domain::lab::**"]
+message = "the product applies what the Lab proved, as a catalogue; it never uses the Lab."
+
+[[restrict-use]]
+name = "lab-not-product"
+scope = "lab"
+deny = ["crate::domain::product", "crate::domain::product::**"]
+message = "the Lab proves techniques; it never uses the product."
 
 # Top layer first. app may use domain, domain uses neither.
 [[layering]]

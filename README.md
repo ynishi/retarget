@@ -1,11 +1,17 @@
 # retarget
 
-Tune a coding agent's harness one setting at a time, and keep only what measurably helps.
+Find what wastes your coding agent's or swarm's runs, apply the fix that is known for it, and keep it where it fits.
 
-retarget watches the telemetry your coding agent's harness already sends,
-changes one of the harness's own settings, and keeps the change only when the
-cost per successful session fell past a threshold fixed in advance. Otherwise it
-puts the setting back.
+retarget watches the telemetry your coding agent's harness already sends, finds
+patterns of waste in it, applies the technique its catalogue knows for each, and
+checks that the technique fits you. One that makes things worse is put back and
+the next is tried. What counts is the agent's performance: what a successful
+task costs, how long it takes, how often it succeeds.
+
+Techniques are found and proven in a Lab, with experiments. The framework — the
+core, the adapters, the Lab's machinery and a catalogue built from public facts —
+is open here. Data, a tuned catalogue and the features that find patterns plug
+in from outside it.
 
 ## Crates
 

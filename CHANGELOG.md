@@ -17,6 +17,10 @@ and this project adheres to
   adoptions rolled out from shown to a share of runs to all but a holdout,
   and a fit check that puts back a technique shown to make a customer's runs
   worse. Detector and CatalogueSource ports let tuned ones plug in.
+- Claude Code's telemetry events (OTLP/JSON logs) become runs: each session's
+  tree of the main conversation, its subagents and compaction, with every
+  request's tokens, reported cost and, from a price table the caller passes,
+  its cost by kind of token. What cannot be read is noted, never guessed.
 
 ### Changed
 

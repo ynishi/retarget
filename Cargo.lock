@@ -540,6 +540,8 @@ name = "retarget"
 version = "0.1.0"
 dependencies = [
  "retarget-core",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

@@ -29,3 +29,15 @@
 //! ([`retarget_core::domain::put_back`]). Nothing in the user's own scope is
 //! written: a setting there (the telemetry environment, the status line) is
 //! shown to the user, who sets it.
+//!
+//! # Adapters
+//!
+//! - [`claude_code`]: Claude Code's telemetry events, translated into runs.
+//! - [`otlp`]: the OpenTelemetry encoding of logs, shared by any harness that
+//!   sends it.
+//! - [`price`]: prices per model, which the caller passes in, to price a
+//!   request's terms when the harness reports only a total.
+
+pub mod claude_code;
+pub mod otlp;
+pub mod price;

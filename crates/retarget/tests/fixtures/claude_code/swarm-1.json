@@ -1,0 +1,125 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "session.id", "value": { "stringValue": "test-session-1" } },
+          { "key": "app.version", "value": { "stringValue": "2.1.319" } }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "timeUnixNano": "1767225600000000000",
+              "body": { "stringValue": "claude_code.user_prompt" },
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "user_prompt" } },
+                { "key": "event.sequence", "value": { "intValue": "0" } },
+                { "key": "prompt.id", "value": { "stringValue": "test-prompt-1" } },
+                { "key": "prompt_length", "value": { "intValue": "42" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225601000000000",
+              "body": { "stringValue": "claude_code.api_request" },
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "api_request" } },
+                { "key": "event.sequence", "value": { "intValue": "1" } },
+                { "key": "query_source", "value": { "stringValue": "repl_main_thread" } },
+                { "key": "model", "value": { "stringValue": "test-model" } },
+                { "key": "request_id", "value": { "stringValue": "test-req-1" } },
+                { "key": "input_tokens", "value": { "intValue": "100" } },
+                { "key": "output_tokens", "value": { "intValue": "50" } },
+                { "key": "cache_read_tokens", "value": { "intValue": "1000" } },
+                { "key": "cache_creation_tokens", "value": { "intValue": "200" } },
+                { "key": "cache_creation_5m_tokens", "value": { "intValue": "200" } },
+                { "key": "cache_creation_1h_tokens", "value": { "intValue": "0" } },
+                { "key": "cost_usd", "value": { "doubleValue": 0.005 } },
+                { "key": "cost_usd_micros", "value": { "intValue": "5000" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225602000000000",
+              "body": { "stringValue": "claude_code.tool_result" },
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "tool_result" } },
+                { "key": "event.sequence", "value": { "intValue": "2" } },
+                { "key": "tool_name", "value": { "stringValue": "Agent" } },
+                { "key": "tool_use_id", "value": { "stringValue": "test-tool-1" } },
+                { "key": "success", "value": { "stringValue": "true" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225603000000000",
+              "body": { "stringValue": "claude_code.api_request" },
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "claude_code.api_request" } },
+                { "key": "event.sequence", "value": { "intValue": "3" } },
+                { "key": "agent_id", "value": { "stringValue": "test-a1" } },
+                { "key": "agent.name", "value": { "stringValue": "Explore" } },
+                { "key": "query_source", "value": { "stringValue": "agent:builtin:Explore" } },
+                { "key": "model", "value": { "stringValue": "test-model" } },
+                { "key": "input_tokens", "value": { "intValue": "10" } },
+                { "key": "output_tokens", "value": { "intValue": "20" } },
+                { "key": "cache_read_tokens", "value": { "intValue": "0" } },
+                { "key": "cache_creation_tokens", "value": { "intValue": "300" } },
+                { "key": "cache_creation_5m_tokens", "value": { "intValue": "0" } },
+                { "key": "cache_creation_1h_tokens", "value": { "intValue": "0" } },
+                { "key": "cost_usd", "value": { "doubleValue": 0.004 } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225604000000000",
+              "body": { "stringValue": "claude_code.tool_result" },
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "tool_result" } },
+                { "key": "event.sequence", "value": { "intValue": "4" } },
+                { "key": "agent_id", "value": { "stringValue": "test-a1" } },
+                { "key": "tool_name", "value": { "stringValue": "Read" } },
+                { "key": "success", "value": { "boolValue": true } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225605000000000",
+              "body": { "stringValue": "claude_code.api_request" },
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "api_request" } },
+                { "key": "event.sequence", "value": { "intValue": "5" } },
+                { "key": "agent_id", "value": { "stringValue": "test-a2" } },
+                { "key": "parent_agent_id", "value": { "stringValue": "test-a1" } },
+                { "key": "model", "value": { "stringValue": "test-model" } },
+                { "key": "input_tokens", "value": { "intValue": "1" } },
+                { "key": "output_tokens", "value": { "intValue": "2" } },
+                { "key": "cache_read_tokens", "value": { "intValue": "3" } },
+                { "key": "cache_creation_tokens", "value": { "intValue": "0" } },
+                { "key": "cost_usd_micros", "value": { "intValue": "7" } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "timeUnixNano": "1767225605500000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "api_request" } },
+                { "key": "input_tokens", "value": { "intValue": "1" } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "claude-code" } },
+          { "key": "session.id", "value": { "stringValue": "test-session-1" } },
+          { "key": "app.version", "value": { "stringValue": "2.1.320" } }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "timeUnixNano": "1767225606000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "tool_result" } },
+                { "key": "event.sequence", "value": { "intValue": "6" } },
+                { "key": "agent_id", "value": { "stringValue": "test-a2" } },
+                { "key": "parent_agent_id", "value": { "stringValue": "test-a1" } },
+                { "key": "tool_name", "value": { "stringValue": "Bash" } },
+                { "key": "success", "value": { "stringValue": "false" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225607000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "api_error" } },
+                { "key": "event.sequence", "value": { "intValue": "7" } },
+                { "key": "agent_id", "value": { "stringValue": "test-a2" } },
+                { "key": "parent_agent_id", "value": { "stringValue": "test-a1" } },
+                { "key": "attempt", "value": { "intValue": "2" } },
+                { "key": "status_code", "value": { "intValue": "529" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225608000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "subagent_completed" } },
+                { "key": "event.sequence", "value": { "intValue": "8" } },
+                { "key": "agent_id", "value": { "stringValue": "test-a2" } },
+                { "key": "agent_type", "value": { "stringValue": "general-purpose" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225609000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "tool_result" } },
+                { "key": "event.sequence", "value": { "intValue": "9" } },
+                { "key": "tool_name", "value": { "stringValue": "TodoWrite" } },
+                { "key": "success", "value": { "stringValue": "true" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225610000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "compaction" } },
+                { "key": "event.sequence", "value": { "intValue": "10" } },
+                { "key": "trigger", "value": { "stringValue": "auto" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225611000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "api_request" } },
+                { "key": "event.sequence", "value": { "intValue": "11" } },
+                { "key": "query_source", "value": { "stringValue": "compact" } },
+                { "key": "model", "value": { "stringValue": "test-model" } },
+                { "key": "input_tokens", "value": { "intValue": "5000" } },
+                { "key": "output_tokens", "value": { "intValue": "500" } },
+                { "key": "cache_read_tokens", "value": { "intValue": "0" } },
+                { "key": "cache_creation_tokens", "value": { "intValue": "0" } },
+                { "key": "cost_usd_micros", "value": { "intValue": "22500" } }
+              ]
+            },
+            {
+              "timeUnixNano": "1767225612000000000",
+              "attributes": [
+                { "key": "event.name", "value": { "stringValue": "api_request" } },
+                { "key": "event.sequence", "value": { "intValue": "12" } },
+                { "key": "agent_id", "value": { "stringValue": "test-a3" } },
+                { "key": "parent_agent_id", "value": { "stringValue": "test-gone" } },
+                { "key": "model", "value": { "stringValue": "test-model" } },
+                { "key": "input_tokens", "value": { "intValue": "1" } },
+                { "key": "output_tokens", "value": { "intValue": "1" } },
+                { "key": "cache_read_tokens", "value": { "intValue": "1" } },
+                { "key": "cache_creation_tokens", "value": { "intValue": "0" } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
